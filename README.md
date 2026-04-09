@@ -1,36 +1,83 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Data Analysis Agent
+
+An AI-powered data analysis assistant built with [Next.js](https://nextjs.org), [Mastra](https://mastra.ai), and [OpenRouter](https://openrouter.ai). Chat with an agent that can write and execute Python code to analyze data, generate visualizations, and fetch stock market data — all in the browser.
+
+## Features
+
+- **Conversational data analysis** — ask questions in plain English and get back results, charts, and insights.
+- **Python code execution** — the agent writes and runs Python 3 with pandas, numpy, matplotlib, seaborn, scipy, and yfinance.
+- **Auto-generated plots** — matplotlib/seaborn charts are captured and displayed inline.
+- **Chat memory** — conversations persist across page reloads via Mastra memory + LibSQL.
+
+## Prerequisites
+
+- **Node.js** >= 22.13.0
+- **pnpm** (recommended) or npm
+- **Python 3** with the following packages available:
+  ```
+  pandas numpy matplotlib seaborn yfinance scipy
+  ```
+  Install them if needed:
+  ```bash
+  pip3 install pandas numpy matplotlib seaborn yfinance scipy
+  ```
+- An **OpenRouter API key** — get one at [openrouter.ai/keys](https://openrouter.ai/keys)
 
 ## Getting Started
 
-First, run the development server:
+1. **Install dependencies**
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+   ```bash
+   pnpm install
+   ```
+
+2. **Configure environment variables**
+
+   Copy the example env file and add your API key:
+
+   ```bash
+   cp .env.example .env
+   ```
+
+   Then edit `.env`:
+
+   ```
+   OPENROUTER_API_KEY=<your_openrouter_api_key>
+   ```
+
+3. **Start the dev server**
+
+   ```bash
+   pnpm dev
+   ```
+
+4. **Open the app**
+
+   Visit [http://localhost:3000](http://localhost:3000) and start chatting. Try a prompt like:
+
+   > Fetch the last 100 days of Apple (AAPL) stock prices and plot a line chart.
+
+## Project Structure
+
+```
+src/
+├── app/
+│   ├── page.tsx              # Chat UI
+│   └── api/chat/route.ts     # Chat API route (streams agent responses)
+├── mastra/
+│   ├── index.ts              # Mastra configuration (agents, storage, logging)
+│   ├── agents/
+│   │   └── data-analysis-agent.ts  # Agent definition & system prompt
+│   └── tools/
+│       └── run-python-code.ts      # Tool that executes Python & captures plots
+└── components/               # UI components (conversation, messages, tools, etc.)
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Available Scripts
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
-
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
-
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+| Command      | Description                  |
+| ------------ | ---------------------------- |
+| `pnpm dev`   | Start the Next.js dev server |
+| `pnpm build` | Build for production         |
+| `pnpm start` | Start the production server  |
+| `pnpm lint`  | Run ESLint                   |
