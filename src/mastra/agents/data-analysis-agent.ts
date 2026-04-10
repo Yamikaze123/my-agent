@@ -1,7 +1,7 @@
 import { Agent } from "@mastra/core/agent";
-import { Memory } from "@mastra/memory";
 import { runPythonCodeTool } from "../tools/run-python-code";
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
+import { memory } from "../storage";
 
 const openrouter = createOpenRouter({
   apiKey: process.env.OPENROUTER_API_KEY,
@@ -62,5 +62,5 @@ User: "Compare Tesla and Microsoft returns"
 `,
   model: openrouter("minimax/minimax-m2.5:free"),
   tools: { runPythonCodeTool },
-  memory: new Memory(),
+  memory
 });

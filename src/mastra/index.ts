@@ -1,7 +1,5 @@
 import { Mastra } from "@mastra/core/mastra";
 import { PinoLogger } from "@mastra/loggers";
-import { LibSQLStore } from "@mastra/libsql";
-import { MastraCompositeStore } from "@mastra/core/storage";
 import {
   Observability,
   DefaultExporter,
@@ -9,16 +7,11 @@ import {
   SensitiveDataFilter,
 } from "@mastra/observability";
 import { dataAnalysisAgent } from "./agents/data-analysis-agent";
+import { storage } from "./storage";
 
 export const mastra = new Mastra({
   agents: { dataAnalysisAgent },
-  storage: new MastraCompositeStore({
-    id: "composite-storage",
-    default: new LibSQLStore({
-      id: "mastra-storage",
-      url: "file:./mastra.db",
-    }),
-  }),
+  storage,
   logger: new PinoLogger({
     name: "Mastra",
     level: "info",
