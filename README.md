@@ -76,18 +76,19 @@ src/
 
 ## Available Scripts
 
-| Command      | Description                  |
-| ------------ | ---------------------------- |
-| `pnpm dev`   | Start the Next.js dev server |
-| `pnpm build` | Build for production         |
-| `pnpm start` | Start the production server  |
-| `pnpm lint`  | Run ESLint                   |
+| Command       | Description                    |
+| ------------  | ------------------------------ |
+| `pnpm dev`    | Start the Next.js dev server   |
+| `pnpm build`  | Build for production           |
+| `pnpm start`  | Start the production server    |
+| `pnpm lint`   | Run ESLint                     |
+| `pnpm studio` | Start the Mastra Studio server |
 
 ## AI Usage
 
 Mastra and NextJS init processes was used to bootstrap the initial setup and configuration of the repo. 
 
 AI was used to assist with the following tasks:
-- Creating the `run-python-code` tool
-- Migrate the DB from the file-system based LibSQL to externally hosted Supabase PostGres to work with Vercel deployed app
-- Add the example prompts as cards to home page of the app
+- Code generation: create the `run-python-code` tool
+- Code refactor: migrate the DB from the file-system based LibSQL to externally hosted Supabase PostGres to work with Vercel deployed app
+- Code generation: add the example prompts as cards to home page of the app
