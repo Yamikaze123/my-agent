@@ -16,7 +16,7 @@ function getPgStore(): PostgresStore {
     global.pgStore = new PostgresStore({
       id: 'pg-storage',
       host: 'aws-1-us-west-2.pooler.supabase.com',
-      port: '5432',
+      port: '6543',
       database: 'postgres',
       user: 'postgres.ckxyksujagxjygdnbmbn',
       password: process.env.DATABASE_PASSWORD
