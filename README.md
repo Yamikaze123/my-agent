@@ -39,10 +39,11 @@ An AI-powered data analysis assistant built with [Next.js](https://nextjs.org), 
    cp .env.example .env
    ```
 
-   Then edit `.env`:
+   Then edit `.env` (OPENROUTER_API_KEY and DATABASE_PASSWORD are required)
 
    ```
    OPENROUTER_API_KEY=<your_openrouter_api_key>
+   DATABASE_PASSWORD=<your_database_password>
    ```
 
 3. **Start the dev server**
@@ -81,3 +82,12 @@ src/
 | `pnpm build` | Build for production         |
 | `pnpm start` | Start the production server  |
 | `pnpm lint`  | Run ESLint                   |
+
+## AI Usage
+
+Mastra and NextJS init processes was used to bootstrap the initial setup and configuration of the repo. 
+
+AI was used to assist with the following tasks:
+- Creating the `run-python-code` tool
+- Migrate the DB from the file-system based LibSQL to externally hosted Supabase PostGres to work with Vercel deployed app
+- Add the example prompts as cards to home page of the app

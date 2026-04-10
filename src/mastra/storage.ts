@@ -15,10 +15,10 @@ function getPgStore(): PostgresStore {
     }
     global.pgStore = new PostgresStore({
       id: 'pg-storage',
-      host: 'aws-1-us-west-2.pooler.supabase.com',
-      port: '6543',
+      host: process.env.DATABASE_HOST || 'aws-1-us-west-2.pooler.supabase.com',
+      port: process.env.DATABASE_PORT || '6543',
       database: 'postgres',
-      user: 'postgres.ckxyksujagxjygdnbmbn',
+      user: process.env.DATABASE_USER || 'postgres.ckxyksujagxjygdnbmbn',
       password: process.env.DATABASE_PASSWORD
     })
   }
