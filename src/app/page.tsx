@@ -4,7 +4,6 @@ import "@/app/globals.css";
 import { useEffect, useState } from "react";
 import { DefaultChatTransport, ToolUIPart } from "ai";
 import { useChat } from "@ai-sdk/react";
-import Image from "next/image";
 import {
   PromptInput,
   PromptInputBody,
@@ -46,7 +45,8 @@ function ToolImages({ output }: { output: Record<string, unknown> }) {
   return (
     <div className="flex flex-col gap-3 my-3">
       {images.map((base64, idx) => (
-        <Image
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
           key={idx}
           src={`data:image/png;base64,${base64}`}
           alt={`Generated plot ${idx + 1}`}
