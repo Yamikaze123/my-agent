@@ -1,12 +1,13 @@
 import { Agent } from "@mastra/core/agent";
-import { createGoogleGenerativeAI } from "@ai-sdk/google";
+import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { runPythonCodeTool } from "../tools/run-python-code";
 import { memory } from "../storage";
 
-const googleProvider = createGoogleGenerativeAI({
-  apiKey: process.env.GOOGLE_GENERATIVE_AI_API_KEY,
+const openRouterProvider = createOpenRouter({
+  apiKey: process.env.OPENROUTER_API_KEY,
+  baseURL: "https://openrouter.ai/api/v1",
+  compatibility: "strict",
 });
-
 
 
 export const dataAnalysisAgent = new Agent({
@@ -64,7 +65,7 @@ User: "Analyze this CSV data" (with data context)
 User: "Compare Tesla and Microsoft returns"
 → Call run-python-code with yfinance for both tickers + compute returns + plot + statistical test
 `,
-  model: googleProvider("gemini-2.0-flash-lite"),
+  model: openRouterProvider.chat("tencent/hy3-preview:free"),
   tools: { runPythonCodeTool },
   memory
 });
