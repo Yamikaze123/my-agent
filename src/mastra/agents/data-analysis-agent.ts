@@ -1,11 +1,14 @@
 import { Agent } from "@mastra/core/agent";
-import { runPythonCodeTool } from "../tools/run-python-code";
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
+import { runPythonCodeTool } from "../tools/run-python-code";
 import { memory } from "../storage";
 
-const openrouter = createOpenRouter({
+const openRouterProvider = createOpenRouter({
   apiKey: process.env.OPENROUTER_API_KEY,
+  baseURL: "https://openrouter.ai/api/v1",
+  compatibility: "strict",
 });
+
 
 export const dataAnalysisAgent = new Agent({
   id: "data-analysis-agent",
@@ -62,7 +65,7 @@ User: "Analyze this CSV data" (with data context)
 User: "Compare Tesla and Microsoft returns"
 → Call run-python-code with yfinance for both tickers + compute returns + plot + statistical test
 `,
-  model: openrouter("minimax/minimax-m2.5:free"),
+  model: openRouterProvider.chat("tencent/hy3-preview:free"),
   tools: { runPythonCodeTool },
   memory
 });
