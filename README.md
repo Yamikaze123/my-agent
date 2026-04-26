@@ -103,3 +103,16 @@ AI was used to assist with the following tasks:
 - **Code refactor**: replace module-level shared thread ID with per-user cookie-based thread IDs. Author asked AI whether the existing `randomUUID()` approach would give each Vercel user a unique thread — AI identified that the ID was generated once at module load time and shared across all users/requests, and that it would reset on cold starts. AI then implemented a cookie-based solution using `next/headers`, but this caused a Next.js router initialization error. AI diagnosed the issue and rewrote the approach to parse cookies directly from the request headers instead.
 - **Bug fix**: `yfinance` returns DataFrames with MultiIndex columns (even for a single ticker), which caused `Series.__format__` errors when the agent tried to format statistics with f-strings (e.g. `f"{mean_price:.2f}"`). AI diagnosed the root cause and added instructions to the agent's system prompt telling it to flatten MultiIndex columns after download (`df.columns = df.columns.get_level_values(0)`) or convert aggregated values to scalars with `.item()` / `float()` before formatting.
 - **Bug fix**: the agent's self-correction loop would repeatedly retry `yfinance` calls on rate-limit errors (`429 Too Many Requests`), burning tokens and compounding the problem. AI added an explicit rule to the agent's system prompt: **never retry on rate-limit errors** — instead, inform the user to try again later. This prevents runaway tool invocations and unnecessary API spend.
+
+### Milestone Week 3
+AI was used to assist with the following tasks:
+
+- **AI testing**: replacing previous AI's to plug in new AI agents for testing. This was done to test new AI models to try and fix rate limiting issues. Model's tested include `Gemini 2.5 flash`, `Gemini 2.0 flash`, `Gemini 2.0 flash lite`, and `Tencent Hy3`. 
+
+- **Bug fix**: bug fixing for model replacements. `Gemini 2.5 flash connectivity issue: Gemini 2.5 flash not connecting with data-analysis-agent.ts properly. Gave possible reasons why and suggested downgrading to a simpler model to help with connecting issues. This option lead to testing of Gemini 2.0 flash, and Gemini 2.0 flash lite. Both models worked but received rate limiting.
+
+- **Bug analysis**: bug analysis on error messages produced by Gemini 2.5. Used to analyze bugs produced by the `Gemini 2.5 flash connectivity issue`. This brought about possible fixes mentioned above.
+
+- **Package Management**: AI used to scan package.json for dependences and remove unnecessary packages. Also used to add in packages for `@ai-sdk/google`. This package was later purged during the final cleaning of code.
+
+
