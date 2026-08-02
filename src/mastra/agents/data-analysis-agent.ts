@@ -1,6 +1,6 @@
 import { Agent } from "@mastra/core/agent";
-import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { runPythonCodeTool } from "../tools/run-python-code";
+import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { memory } from "../storage";
 
 const openRouterProvider = createOpenRouter({
@@ -8,7 +8,6 @@ const openRouterProvider = createOpenRouter({
   baseURL: "https://openrouter.ai/api/v1",
   compatibility: "strict",
 });
-
 
 export const dataAnalysisAgent = new Agent({
   id: "data-analysis-agent",
@@ -67,5 +66,5 @@ User: "Compare Tesla and Microsoft returns"
 `,
   model: openRouterProvider.chat("tencent/hy3-preview:free"),
   tools: { runPythonCodeTool },
-  memory
+  memory,
 });
