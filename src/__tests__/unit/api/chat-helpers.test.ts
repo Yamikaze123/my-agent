@@ -30,7 +30,7 @@ vi.mock("next/server", () => ({
   },
 }));
 
-const { POST, GET } = await import("@/app/api/chat/route");
+const { POST, GET, DELETE } = await import("@/app/api/chat/route");
 
 function makeRequest(
   method: "POST" | "GET",
@@ -79,6 +79,16 @@ describe("GET /api/chat", () => {
     // Both should be valid non-empty strings
     expect(id1).toBeTruthy();
     expect(id2).toBeTruthy();
+  });
+});
+
+describe("DELETE /api/chat", () => {
+  it("starts a fresh thread by setting a new thread_id cookie", async () => {
+    const res = await DELETE();
+    const cookie = res.headers.get("Set-Cookie") ?? "";
+
+    expect(res.status).toBe(200);
+    expect(cookie).toMatch(/thread_id=.+/);
   });
 });
 

@@ -40,7 +40,7 @@ function makeExecution(opts: {
 
 function setupSandbox(execution: ReturnType<typeof makeExecution>) {
   mockRunCode
-    .mockResolvedValueOnce(undefined) // pip install yfinance
+    .mockResolvedValueOnce(makeExecution({})) // dependency check/install
     .mockResolvedValueOnce(execution); // actual code
   mockCreate.mockResolvedValue({ runCode: mockRunCode, kill: mockKill });
 }
@@ -87,13 +87,76 @@ describe("runPythonCodeTool", () => {
       expect(result.images).toHaveLength(2);
     });
 
-    it("always installs yfinance before running user code", async () => {
+    it("keeps image data out of the model-facing tool output", () => {
+      const modelOutput = runPythonCodeTool.toModelOutput?.({
+        stdout: "summary",
+        stderr: "",
+        images: ["very-large-base64-image"],
+        success: true,
+      });
+
+      expect(modelOutput).toEqual({
+        type: "json",
+        value: {
+          stdout: "summary",
+          stderr: "",
+          imageCount: 1,
+          success: true,
+        },
+      });
+    });
+
+    it("truncates unbounded logs in the model-facing tool output", () => {
+      const modelOutput = runPythonCodeTool.toModelOutput?.({
+        stdout: "x".repeat(8_001),
+        stderr: "y".repeat(4_001),
+        images: [],
+        success: false,
+      }) as {
+        value: { stdout: string; stderr: string };
+      };
+
+      expect(modelOutput.value.stdout).toHaveLength(8_000 + 43);
+      expect(modelOutput.value.stderr).toHaveLength(4_000 + 43);
+      expect(modelOutput.value.stdout).toContain("[truncated");
+      expect(modelOutput.value.stderr).toContain("[truncated");
+    });
+
+    it("always installs analysis dependencies before running user code", async () => {
       setupSandbox(makeExecution({}));
 
       await execute("import yfinance");
 
       expect(mockRunCode).toHaveBeenCalledTimes(2);
-      expect(mockRunCode.mock.calls[0][0]).toMatch(/pip.*install.*yfinance/);
+      expect(mockRunCode.mock.calls[0][0]).toContain("yfinance");
+      expect(mockRunCode.mock.calls[0][0]).toContain("tabulate");
+      expect(mockRunCode.mock.calls[0][1]).toEqual({
+        timeoutMs: 45_000,
+        requestTimeoutMs: 30_000,
+      });
+      expect(mockRunCode.mock.calls[1][1]).toEqual({
+        timeoutMs: 45_000,
+        requestTimeoutMs: 30_000,
+      });
+    });
+
+    it("returns an installation error without running user code", async () => {
+      mockRunCode.mockResolvedValueOnce(
+        makeExecution({
+          error: {
+            name: "TimeoutError",
+            value: "dependency installation timed out",
+            traceback: "",
+          },
+        }),
+      );
+      mockCreate.mockResolvedValue({ runCode: mockRunCode, kill: mockKill });
+
+      const result = await execute("import yfinance");
+
+      expect(result.success).toBe(false);
+      expect(result.stderr).toContain("dependency installation timed out");
+      expect(mockRunCode).toHaveBeenCalledOnce();
     });
   });
 

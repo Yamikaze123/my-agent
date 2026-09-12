@@ -46,7 +46,7 @@ vi.mock("next/server", () => ({
   },
 }));
 
-const { POST, GET } = await import("@/app/api/chat/route");
+const { POST, GET, DELETE } = await import("@/app/api/chat/route");
 
 function chatRequest(
   method: "POST" | "GET",
@@ -98,6 +98,75 @@ describe("POST /api/chat — streaming response", () => {
     const callArg = (handleChatStream as ReturnType<typeof vi.fn>).mock
       .calls[0][0];
     expect(callArg.params.messages).toEqual(body.messages);
+  });
+
+  it("bounds model steps, output, retries, and memory history", async () => {
+    const { handleChatStream } = await import("@mastra/ai-sdk");
+    await POST(chatRequest("POST", { body: { messages: [] } }));
+
+    const callArg = (handleChatStream as ReturnType<typeof vi.fn>).mock
+      .calls[0][0];
+
+    expect(callArg.params.maxSteps).toBe(3);
+    expect(callArg.params.modelSettings).toEqual({
+      maxRetries: 0,
+    });
+    expect(callArg.params.providerOptions).toEqual({
+      openai: {
+        maxCompletionTokens: 1200,
+      },
+    });
+    expect(callArg.params.memory.options.lastMessages).toBe(8);
+  });
+
+  it("removes image payloads from historical tool messages sent to the model", async () => {
+    const { handleChatStream } = await import("@mastra/ai-sdk");
+    await POST(
+      chatRequest("POST", {
+        body: {
+          messages: [
+            {
+              role: "assistant",
+              parts: [
+                {
+                  type: "tool-runPythonCodeTool",
+                  output: {
+                    stdout: "stats",
+                    stderr: "",
+                    images: ["large-base64-image"],
+                    success: true,
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      }),
+    );
+
+    const callArg = (handleChatStream as ReturnType<typeof vi.fn>).mock
+      .calls[0][0];
+    expect(callArg.params.messages[0].parts[0].output).toEqual({
+      stdout: "stats",
+      stderr: "",
+      images: [],
+      imageCount: 1,
+      success: true,
+    });
+  });
+
+  it("returns a retry-later message for provider rate limits", async () => {
+    const { handleChatStream } = await import("@mastra/ai-sdk");
+    await POST(chatRequest("POST", { body: { messages: [] } }));
+
+    const callArg = (handleChatStream as ReturnType<typeof vi.fn>).mock
+      .calls[0][0];
+    const message = callArg.onError(
+      new Error("rate_limit_exceeded: tokens exhausted"),
+    );
+
+    expect(message).toContain("token rate limit");
+    expect(message).toContain("retry");
   });
 
   it("persists thread_id across requests via cookie", async () => {
@@ -159,5 +228,16 @@ describe("GET /api/chat — message history", () => {
   it("gets the agent by the correct ID", async () => {
     await GET(chatRequest("GET"));
     expect(mockGetAgentById).toHaveBeenCalledWith("data-analysis-agent");
+  });
+});
+
+describe("DELETE /api/chat — new chat", () => {
+  it("rotates the thread_id cookie", async () => {
+    const res = await DELETE();
+    const cookie = res.headers.get("Set-Cookie") ?? "";
+
+    expect(res.status).toBe(200);
+    expect(cookie).toMatch(/thread_id=.+/);
+    expect(cookie).toContain("Max-Age=31536000");
   });
 });

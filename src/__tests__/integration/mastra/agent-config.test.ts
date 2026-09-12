@@ -49,4 +49,14 @@ describe("dataAnalysisAgent configuration", () => {
         typeof dataAnalysisAgent.getInstructions === "function",
     ).toBe(true);
   });
+
+  it("includes resilient financial data retrieval guidance", async () => {
+    const instructions = await dataAnalysisAgent.getInstructions();
+
+    expect(instructions).toContain("threads=False");
+    expect(instructions).toContain("yf.Ticker(ticker).history");
+    expect(instructions).toContain("all-NaN");
+    expect(instructions).toContain("Do not use one multi-ticker yf.download call");
+    expect(instructions).toContain("timeout=15");
+  });
 });

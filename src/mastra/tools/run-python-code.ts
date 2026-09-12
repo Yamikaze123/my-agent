@@ -2,12 +2,31 @@ import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 import { Sandbox } from "@e2b/code-interpreter";
 
+const MAX_MODEL_STDOUT_LENGTH = 8_000;
+const MAX_MODEL_STDERR_LENGTH = 4_000;
+const SANDBOX_REQUEST_TIMEOUT_MS = 30_000;
+const CODE_EXECUTION_TIMEOUT_MS = 45_000;
+
+const INSTALL_ANALYSIS_DEPENDENCIES =
+  "import importlib.util, subprocess, sys; " +
+  "missing = [p for p in ['yfinance', 'tabulate'] " +
+  "if importlib.util.find_spec(p) is None]; " +
+  "subprocess.check_call([sys.executable, '-m', 'pip', 'install', " +
+  "'--disable-pip-version-check', '--no-input', '--timeout', '15', " +
+  "'--retries', '1', '-q', *missing]) if missing else None";
+
+function truncateForModel(value: string, maxLength: number): string {
+  if (value.length <= maxLength) return value;
+
+  return `${value.slice(0, maxLength)}\n[truncated before being sent to the model]`;
+}
+
 export const runPythonCodeTool = createTool({
   id: "run-python-code",
   description:
     "Execute Python code in a cloud sandbox and return stdout, stderr, and any generated plot images as base64. " +
     "Use this tool whenever the user asks for data analysis, visualization, statistics, or any computation. " +
-    "The code has access to: pandas, numpy, matplotlib, seaborn, yfinance, scipy, scikit-learn (sklearn).",
+    "The code has access to: pandas, numpy, matplotlib, seaborn, yfinance, tabulate, scipy, scikit-learn (sklearn).",
   inputSchema: z.object({
     code: z
       .string()
@@ -19,18 +38,42 @@ export const runPythonCodeTool = createTool({
     images: z.array(z.string()).describe("Base64-encoded PNG images"),
     success: z.boolean(),
   }),
+  // Keep the complete execution result for the UI, but do not send large
+  // base64-encoded images or unbounded logs back through the model context.
+  toModelOutput: (output) => ({
+    type: "json",
+    value: {
+      stdout: truncateForModel(output.stdout, MAX_MODEL_STDOUT_LENGTH),
+      stderr: truncateForModel(output.stderr, MAX_MODEL_STDERR_LENGTH),
+      imageCount: output.images.length,
+      success: output.success,
+    },
+  }),
   execute: async ({ code }) => {
     const sbx = await Sandbox.create({
       apiKey: process.env.E2B_API_KEY,
+      requestTimeoutMs: SANDBOX_REQUEST_TIMEOUT_MS,
     });
 
     try {
-      // Install packages not included in the default E2B sandbox
-      await sbx.runCode(
-        "import subprocess; subprocess.check_call(['pip', 'install', '-q', 'yfinance'])",
-      );
+      const runCode = (source: string) =>
+        sbx.runCode(source, {
+          timeoutMs: CODE_EXECUTION_TIMEOUT_MS,
+          requestTimeoutMs: SANDBOX_REQUEST_TIMEOUT_MS,
+        });
 
-      const execution = await sbx.runCode(code);
+      // Install packages not included in the default E2B sandbox
+      const installation = await runCode(INSTALL_ANALYSIS_DEPENDENCIES);
+      if (installation.error) {
+        return {
+          stdout: installation.logs.stdout.join("\n"),
+          stderr: `${installation.error.name}: ${installation.error.value}\n${installation.error.traceback}`,
+          images: [],
+          success: false,
+        };
+      }
+
+      const execution = await runCode(code);
 
       const stdout = execution.logs.stdout.join("\n");
       const stderr = execution.logs.stderr.join("\n");
