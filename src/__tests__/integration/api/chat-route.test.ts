@@ -22,7 +22,7 @@ vi.mock("@mastra/ai-sdk", () => ({
 }));
 
 vi.mock("@mastra/ai-sdk/ui", () => ({
-  toAISdkV5Messages: vi.fn((input) => input?.messages ?? []),
+  toAISdkMessages: vi.fn((input) => input?.messages ?? []),
 }));
 
 vi.mock("ai", () => ({
@@ -107,13 +107,14 @@ describe("POST /api/chat — streaming response", () => {
     const callArg = (handleChatStream as ReturnType<typeof vi.fn>).mock
       .calls[0][0];
 
-    expect(callArg.params.maxSteps).toBe(3);
+    expect(callArg.params.maxSteps).toBe(5);
+    expect(callArg.version).toBe("v6");
     expect(callArg.params.modelSettings).toEqual({
       maxRetries: 0,
     });
     expect(callArg.params.providerOptions).toEqual({
       openai: {
-        maxCompletionTokens: 1200,
+        maxCompletionTokens: 3000,
       },
     });
     expect(callArg.params.memory.options.lastMessages).toBe(8);

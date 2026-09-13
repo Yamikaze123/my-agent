@@ -1,7 +1,10 @@
 import { Agent } from "@mastra/core/agent";
 import { runPythonCodeTool } from "../tools/run-python-code";
+import { getFinanceFixtureTool } from "../tools/get-finance-fixture";
 import { createAzure } from "@ai-sdk/azure";
 import { memory } from "../storage";
+import { MAX_AGENT_STEPS } from "../config";
+import { EnsureFinalResponseProcessor } from "../processors/ensure-final-response";
 
 const azure = createAzure({
   resourceName: "cvent-dev2-azure-chatgpt",
@@ -11,7 +14,7 @@ const azure = createAzure({
 export const dataAnalysisAgent = new Agent({
   id: "data-analysis-agent",
   name: "Data Analysis Agent",
-  instructions: `You are an expert data analysis assistant. You help users explore, analyze, and visualize data using Python. You have access to a tool called "run-python-code" that executes Python code and returns stdout, stderr, and any generated plot images.
+  instructions: `You are an expert data analysis assistant. You help users explore, analyze, and visualize data using Python. You have access to a tool called "run-python-code" that executes Python code and returns stdout, stderr, and any generated plot images. You also have a read-only "get-finance-fixture" tool that returns versioned synthetic finance prices with provenance for reproducible analysis.
 
 ## How to respond
 
@@ -23,6 +26,8 @@ When a user asks for data analysis, visualization, statistics, or any computatio
 ## Code generation rules
 
 - Always write complete, self-contained Python scripts.
+- Use yfinance as the primary finance connector for ordinary user requests, including historical date ranges such as the full 2025 calendar year. For a bounded calendar range, use explicit dates with an exclusive end date, for example start="2025-01-01" and end="2026-01-01". Report the actual returned date range and the adjusted-close semantics.
+- Use get-finance-fixture only when the user explicitly requests the synthetic fixture, reproducible/offline analysis, an evaluation run, or a golden test. Calculate only from the returned rows and include the dataset version and content hash in the response. Never silently substitute the fixture for ordinary market-data requests.
 - For requests involving more than one ticker, fetch each ticker separately. Do not use one multi-ticker yf.download call: a failure for one symbol can otherwise delay or hide valid data for the other symbol. Bound every Yahoo request with timeout=15; use progress=False and threads=False for every yf.download call. Prefer yf.Ticker(ticker).history(period="2y", auto_adjust=True, timeout=15) and, only when that result is empty or all-NaN, retry that ticker once with yf.download(ticker, period="2y", auto_adjust=True, progress=False, threads=False, timeout=15). Raise a data-availability error only after the individual fallback fails.
 - When normalizing yfinance results, select the Close field before handling MultiIndex columns. If the selected Close value is a one-column DataFrame, use that column with iloc[:, 0]. Coerce values with pd.to_numeric(..., errors="coerce") and drop NaNs only after selecting the intended ticker series.
 - Available libraries: pandas, numpy, matplotlib, seaborn, yfinance, tabulate, scipy, os, sys, json, math, datetime, statistics.
@@ -73,6 +78,7 @@ User: "Compare Tesla and Microsoft returns"
 → Call run-python-code with yfinance for both tickers + compute returns + plot + statistical test
 `,
   model: azure.chat("gpt-4o"),
-  tools: { runPythonCodeTool },
+  tools: { runPythonCodeTool, getFinanceFixtureTool },
+  inputProcessors: [new EnsureFinalResponseProcessor(MAX_AGENT_STEPS)],
   memory,
 });

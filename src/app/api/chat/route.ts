@@ -1,14 +1,17 @@
 import { handleChatStream } from "@mastra/ai-sdk";
-import { toAISdkV5Messages } from "@mastra/ai-sdk/ui";
+import { toAISdkMessages } from "@mastra/ai-sdk/ui";
 import { createUIMessageStreamResponse } from "ai";
 import { mastra } from "@/mastra";
 import { NextResponse } from "next/server";
 import { randomUUID } from "crypto";
+import { MAX_AGENT_STEPS } from "@/mastra/config";
 
 const RESOURCE_ID = "data-analysis-chat";
 const THREAD_COOKIE = "thread_id";
-const MAX_AGENT_STEPS = 3;
-const MAX_COMPLETION_TOKENS = 1_200;
+// Comparison requests can require a complete data-fetching, validation,
+// statistics, and plotting script. Keep enough room for the tool arguments so
+// the stream does not end while a tool call is still being assembled.
+const MAX_COMPLETION_TOKENS = 3_000;
 const MAX_MODEL_RETRIES = 0;
 const MAX_HISTORY_OUTPUT_LENGTH = 8_000;
 
@@ -134,6 +137,7 @@ export async function POST(req: Request) {
   const stream = await handleChatStream({
     mastra,
     agentId: "data-analysis-agent",
+    version: "v6",
     params: {
       ...params,
       messages: compactMessages(params.messages),
@@ -183,7 +187,9 @@ export async function GET(req: Request) {
     console.log("No previous messages found.");
   }
 
-  const uiMessages = toAISdkV5Messages(response?.messages || []);
+  const uiMessages = toAISdkMessages(response?.messages || [], {
+    version: "v6",
+  });
 
   const res = NextResponse.json(uiMessages);
   return setThreadCookie(res, threadId);

@@ -15,13 +15,13 @@ vi.mock("@mastra/ai-sdk", () => ({
 }));
 
 vi.mock("@mastra/ai-sdk/ui", () => ({
-  toAISdkV5Messages: vi.fn().mockReturnValue([]),
+  toAISdkMessages: vi.fn().mockReturnValue([]),
 }));
 
 vi.mock("ai", () => ({
-  createUIMessageStreamResponse: vi.fn().mockReturnValue(
-    new Response(null, { status: 200 }),
-  ),
+  createUIMessageStreamResponse: vi
+    .fn()
+    .mockReturnValue(new Response(null, { status: 200 })),
 }));
 
 vi.mock("next/server", () => ({
@@ -74,8 +74,12 @@ describe("GET /api/chat", () => {
     const res1 = await GET(req1);
     const res2 = await GET(req2);
 
-    const id1 = (res1.headers.get("Set-Cookie") ?? "").match(/thread_id=([^;]+)/)?.[1];
-    const id2 = (res2.headers.get("Set-Cookie") ?? "").match(/thread_id=([^;]+)/)?.[1];
+    const id1 = (res1.headers.get("Set-Cookie") ?? "").match(
+      /thread_id=([^;]+)/,
+    )?.[1];
+    const id2 = (res2.headers.get("Set-Cookie") ?? "").match(
+      /thread_id=([^;]+)/,
+    )?.[1];
     // Both should be valid non-empty strings
     expect(id1).toBeTruthy();
     expect(id2).toBeTruthy();
