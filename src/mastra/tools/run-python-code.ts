@@ -21,6 +21,26 @@ function truncateForModel(value: string, maxLength: number): string {
   return `${value.slice(0, maxLength)}\n[truncated before being sent to the model]`;
 }
 
+function hasEscapedLineBreaks(code: string): boolean {
+  return !code.includes("\n") &&
+    (code.includes("\\n") || code.includes("\\r\\n"));
+}
+
+function decodeEscapedLineBreaks(code: string): string {
+  return code.replace(/\\r\\n/g, "\n").replace(/\\n/g, "\n");
+}
+
+function isEscapedLineBreakSyntaxError(
+  code: string,
+  error: { name: string; value: string } | null | undefined,
+): boolean {
+  return (
+    hasEscapedLineBreaks(code) &&
+    error?.name === "SyntaxError" &&
+    /line continuation character/i.test(error.value)
+  );
+}
+
 export const runPythonCodeTool = createTool({
   id: "run-python-code",
   description:
@@ -73,7 +93,16 @@ export const runPythonCodeTool = createTool({
         };
       }
 
-      const execution = await runCode(code);
+      let execution = await runCode(code);
+
+      // Some provider responses can double-escape a multiline tool argument,
+      // leaving literal "\\n" sequences in the Python source. Retry that
+      // specific syntax failure after decoding the line breaks. Valid Python
+      // that contains escaped newlines is left untouched when it executes
+      // successfully on the first attempt.
+      if (isEscapedLineBreakSyntaxError(code, execution.error)) {
+        execution = await runCode(decodeEscapedLineBreaks(code));
+      }
 
       const stdout = execution.logs.stdout.join("\n");
       const stderr = execution.logs.stderr.join("\n");

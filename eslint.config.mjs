@@ -10,6 +10,7 @@ const eslintConfig = defineConfig([
     // Default ignores of eslint-config-next:
     ".mastra",
     ".next/**",
+    "coverage/**",
     "out/**",
     "build/**",
     "next-env.d.ts",

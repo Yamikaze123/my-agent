@@ -177,6 +177,32 @@ describe("runPythonCodeTool", () => {
       expect(result.success).toBe(false);
     });
 
+    it("recovers from provider-escaped multiline Python source", async () => {
+      mockRunCode
+        .mockResolvedValueOnce(makeExecution({}))
+        .mockResolvedValueOnce(
+          makeExecution({
+            error: {
+              name: "SyntaxError",
+              value: "unexpected character after line continuation character",
+              traceback: "Traceback...",
+            },
+          }),
+        )
+        .mockResolvedValueOnce(makeExecution({ stdout: ["recovered"] }));
+      mockCreate.mockResolvedValue({ runCode: mockRunCode, kill: mockKill });
+
+      const escapedCode = "import pandas as pd\\nprint('recovered')";
+      const result = await execute(escapedCode);
+
+      expect(result.success).toBe(true);
+      expect(result.stdout).toBe("recovered");
+      expect(mockRunCode).toHaveBeenCalledTimes(3);
+      expect(mockRunCode.mock.calls[2][0]).toBe(
+        "import pandas as pd\nprint('recovered')",
+      );
+    });
+
     it("formats stderr from execution error fields", async () => {
       const error = {
         name: "ZeroDivisionError",

@@ -1,0 +1,12 @@
+{
+  "fixtureId": "finance-regression",
+  "version": "v1",
+  "file": "finance-regression-v1.json",
+  "sourceType": "synthetic",
+  "frequency": "monthly",
+  "currency": "USD",
+  "priceField": "adjusted_close",
+  "rowCount": 39,
+  "tickers": ["AAPL", "MSFT", "TSLA"],
+  "contentHash": "sha256:0013058c7e0a0dbeadb925db167b3c6c125c360049958c8372c5efc6324b99e5"
+}
