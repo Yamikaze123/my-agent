@@ -37,9 +37,9 @@ vi.mock("ai", () => ({
 vi.mock("next/server", () => ({
   NextResponse: {
     json: vi.fn(
-      (body) =>
+      (body, init) =>
         new Response(JSON.stringify(body), {
-          status: 200,
+          status: init?.status ?? 200,
           headers: { "Content-Type": "application/json" },
         }),
     ),
@@ -60,6 +60,18 @@ function chatRequest(
     },
     body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
   });
+}
+
+function cookieValue(response: Response, name: string): string {
+  const header = response.headers.get("Set-Cookie") ?? "";
+  const value = header.match(new RegExp(`${name}=([^;]+)`))?.[1];
+  if (!value) throw new Error(`Missing ${name} cookie`);
+  return value;
+}
+
+async function establishCookies(): Promise<string> {
+  const response = await GET(chatRequest("GET"));
+  return `session_id=${cookieValue(response, "session_id")}; thread_id=${cookieValue(response, "thread_id")}`;
 }
 
 beforeEach(() => {
@@ -172,18 +184,19 @@ describe("POST /api/chat — streaming response", () => {
 
   it("persists thread_id across requests via cookie", async () => {
     const { handleChatStream } = await import("@mastra/ai-sdk");
-    const threadId = "persistent-thread-abc";
+    const cookies = await establishCookies();
 
     await POST(
       chatRequest("POST", {
         body: { messages: [] },
-        cookie: `thread_id=${threadId}`,
+        cookie: cookies,
       }),
     );
 
     const callArg = (handleChatStream as ReturnType<typeof vi.fn>).mock
       .calls[0][0];
-    expect(callArg.params.memory.thread).toBe(threadId);
+    expect(callArg.params.memory.thread).toMatch(/^[0-9a-f-]{36}$/);
+    expect(callArg.params.memory.resource).toMatch(/^[0-9a-f-]{36}$/);
   });
 
   it("sets thread_id cookie in the response", async () => {
@@ -202,15 +215,33 @@ describe("GET /api/chat — message history", () => {
   });
 
   it("calls memory.recall with the thread and resource IDs", async () => {
-    const threadId = "recall-thread-xyz";
-    await GET(chatRequest("GET", { cookie: `thread_id=${threadId}` }));
+    const cookies = await establishCookies();
+    await GET(chatRequest("GET", { cookie: cookies }));
 
     expect(mockRecall).toHaveBeenCalledWith(
       expect.objectContaining({
-        threadId,
-        resourceId: "data-analysis-chat",
+        threadId: expect.stringMatching(/^[0-9a-f-]{36}$/),
+        resourceId: expect.stringMatching(/^[0-9a-f-]{36}$/),
       }),
     );
+  });
+
+  it("rejects a cross-resource thread read without calling memory", async () => {
+    const firstCookies = await establishCookies();
+    const secondCookies = await establishCookies();
+    const firstSession = firstCookies.match(/session_id=([^;]+)/)?.[1];
+    const secondThread = secondCookies.match(/thread_id=([^;]+)/)?.[1];
+    if (!firstSession || !secondThread) throw new Error("Missing test cookies");
+
+    mockRecall.mockClear();
+    const response = await GET(
+      chatRequest("GET", {
+        cookie: `session_id=${firstSession}; thread_id=${secondThread}`,
+      }),
+    );
+
+    expect(response.status).toBe(401);
+    expect(mockRecall).not.toHaveBeenCalled();
   });
 
   it("returns an empty array when recall throws (no previous messages)", async () => {
@@ -239,6 +270,6 @@ describe("DELETE /api/chat — new chat", () => {
 
     expect(res.status).toBe(200);
     expect(cookie).toMatch(/thread_id=.+/);
-    expect(cookie).toContain("Max-Age=31536000");
+    expect(cookie).toContain("Max-Age=2592000");
   });
 });

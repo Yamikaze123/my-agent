@@ -26,7 +26,9 @@ vi.mock("ai", () => ({
 
 vi.mock("next/server", () => ({
   NextResponse: {
-    json: vi.fn((body) => new Response(JSON.stringify(body), { status: 200 })),
+    json: vi.fn((body, init) =>
+      new Response(JSON.stringify(body), { status: init?.status ?? 200 }),
+    ),
   },
 }));
 
@@ -46,6 +48,18 @@ function makeRequest(
   });
 }
 
+function cookieValue(response: Response, name: string): string {
+  const header = response.headers.get("Set-Cookie") ?? "";
+  const value = header.match(new RegExp(`${name}=([^;]+)`))?.[1];
+  if (!value) throw new Error(`Missing ${name} cookie`);
+  return value;
+}
+
+async function establishCookies(): Promise<string> {
+  const response = await GET(makeRequest("GET"));
+  return `session_id=${cookieValue(response, "session_id")}; thread_id=${cookieValue(response, "thread_id")}`;
+}
+
 describe("GET /api/chat", () => {
   it("returns 200", async () => {
     const req = makeRequest("GET");
@@ -60,12 +74,12 @@ describe("GET /api/chat", () => {
     expect(cookie).toMatch(/thread_id=/);
   });
 
-  it("reuses an existing thread_id from the request cookie", async () => {
-    const existingId = "my-existing-thread-id";
-    const req = makeRequest("GET", { cookie: `thread_id=${existingId}` });
+  it("reuses an existing signed thread from the request cookies", async () => {
+    const cookies = await establishCookies();
+    const req = makeRequest("GET", { cookie: cookies });
     const res = await GET(req);
     const cookie = res.headers.get("Set-Cookie") ?? "";
-    expect(cookie).toContain(existingId);
+    expect(cookie).toBe("");
   });
 
   it("generates a new thread_id when no cookie is present", async () => {
@@ -114,63 +128,92 @@ describe("POST /api/chat", () => {
     expect(cookie).toMatch(/thread_id=/);
   });
 
-  it("reuses existing thread_id from cookie", async () => {
+  it("reuses existing signed thread from cookie", async () => {
     const { handleChatStream } = await import("@mastra/ai-sdk");
-    const threadId = "test-thread-123";
+    const cookies = await establishCookies();
     const req = makeRequest("POST", {
       body: { messages: [] },
-      cookie: `thread_id=${threadId}`,
+      cookie: cookies,
     });
     await POST(req);
 
     expect(handleChatStream).toHaveBeenCalledWith(
       expect.objectContaining({
         params: expect.objectContaining({
-          memory: expect.objectContaining({ thread: threadId }),
+          memory: expect.objectContaining({
+            thread: expect.any(String),
+            resource: expect.any(String),
+          }),
         }),
       }),
     );
   });
 
-  it("passes resource ID to handleChatStream", async () => {
+  it("passes a server-controlled resource ID to handleChatStream", async () => {
     const { handleChatStream } = await import("@mastra/ai-sdk");
     const req = makeRequest("POST", { body: { messages: [] } });
     await POST(req);
 
-    expect(handleChatStream).toHaveBeenCalledWith(
-      expect.objectContaining({
-        agentId: "data-analysis-agent",
-        params: expect.objectContaining({
-          memory: expect.objectContaining({ resource: "data-analysis-chat" }),
-        }),
-      }),
+    const call = (handleChatStream as ReturnType<typeof vi.fn>).mock
+      .calls[0][0];
+    expect(call.agentId).toBe("data-analysis-agent");
+    expect(call.params.memory.resource).toMatch(
+      /^[0-9a-f-]{36}$/,
+    );
+    expect(call.params.requestContext.toJSON()).toMatchObject({
+      mastra__resourceId: call.params.memory.resource,
+      mastra__threadId: call.params.memory.thread,
+    });
+  });
+
+  it("ignores client-supplied authorization and routing fields", async () => {
+    const { handleChatStream } = await import("@mastra/ai-sdk");
+    vi.clearAllMocks();
+    const req = makeRequest("POST", {
+      body: {
+        messages: [],
+        agentId: "attacker-agent",
+        resourceId: "attacker-resource",
+        tenantId: "attacker-tenant",
+        threadId: "attacker-thread",
+        datasetId: "attacker-dataset",
+        runId: "attacker-run",
+        permissionContext: { permittedActions: ["artifact:read"] },
+        requestContext: { mastra__resourceId: "attacker-resource" },
+      },
+    });
+    await POST(req);
+
+    const call = (handleChatStream as ReturnType<typeof vi.fn>).mock
+      .calls[0][0];
+    expect(call.agentId).toBe("data-analysis-agent");
+    expect(call.params.resourceId).toBeUndefined();
+    expect(call.params.threadId).toBeUndefined();
+    expect(call.params.requestContext.toJSON().mastra__resourceId).not.toBe(
+      "attacker-resource",
     );
   });
 
-  it("sets HttpOnly cookie with 1-year expiry", async () => {
+  it("sets HttpOnly signed cookies with a bounded expiry", async () => {
     const req = makeRequest("POST", { body: { messages: [] } });
     const res = await POST(req);
     const cookie = res.headers.get("Set-Cookie") ?? "";
     expect(cookie).toContain("HttpOnly");
-    expect(cookie).toContain("Max-Age=31536000");
+    expect(cookie).toContain("Max-Age=2592000");
   });
 });
 
 describe("thread ID cookie parsing", () => {
-  it("handles multiple cookies and picks the right one", async () => {
+  it("rejects a plain client-controlled thread cookie", async () => {
     const { handleChatStream } = await import("@mastra/ai-sdk");
+    vi.clearAllMocks();
     const req = makeRequest("POST", {
       body: { messages: [] },
-      cookie: "other_cookie=abc; thread_id=correct-id; another=xyz",
+      cookie: "other_cookie=abc; thread_id=client-controlled-id; another=xyz",
     });
-    await POST(req);
+    const response = await POST(req);
 
-    expect(handleChatStream).toHaveBeenCalledWith(
-      expect.objectContaining({
-        params: expect.objectContaining({
-          memory: expect.objectContaining({ thread: "correct-id" }),
-        }),
-      }),
-    );
+    expect(response.status).toBe(401);
+    expect(handleChatStream).not.toHaveBeenCalled();
   });
 });

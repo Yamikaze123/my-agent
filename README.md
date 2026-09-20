@@ -7,7 +7,7 @@ An AI-powered data analysis assistant built with [Next.js](https://nextjs.org), 
 - **Conversational data analysis** — ask questions in plain English and get back results, charts, and insights.
 - **Cloud-sandboxed Python execution** — the agent writes and runs Python 3 in [E2B](https://e2b.dev) cloud sandboxes with pandas, numpy, matplotlib, seaborn, scipy, scikit-learn, and yfinance pre-installed. No local Python required.
 - **Auto-generated plots** — matplotlib/seaborn charts are captured and displayed inline.
-- **Per-user chat memory** — each user gets a unique thread (via cookie) so conversations persist across page reloads via Mastra memory + PostgreSQL.
+- **Server-scoped chat memory** — each browser receives a signed server-issued session and resource, with thread cookies cryptographically bound to that scope before Mastra memory is accessed.
 - **Vercel-ready** — deploys to Vercel with no extra infrastructure beyond E2B and a PostgreSQL database.
 
 ## Prerequisites
@@ -43,7 +43,10 @@ An AI-powered data analysis assistant built with [Next.js](https://nextjs.org), 
    DATABASE_PORT=6543
    DATABASE_USER=<your_supabase_transaction_pooler_user>
    DATABASE_PASSWORD=<your_supabase_database_password>
+   SESSION_SIGNING_SECRET=<long_random_server_only_secret>
    ```
+
+The current identity boundary is a server-issued anonymous session for this controlled prototype. A production deployment must replace that bootstrap boundary with an authenticated identity provider while retaining the server-side ownership checks.
 
 3. **Start the dev server**
 
@@ -63,9 +66,10 @@ An AI-powered data analysis assistant built with [Next.js](https://nextjs.org), 
 src/
 ├── app/
 │   ├── page.tsx              # Chat UI
-│   └── api/chat/route.ts     # Chat API route (streams agent responses, per-user threads via cookie)
+│   └── api/chat/route.ts     # Chat API route (streams agent responses, signed session/thread isolation)
 ├── mastra/
 │   ├── index.ts              # Mastra configuration (agents, storage, logging)
+│   ├── security/             # Server-issued sessions and permission context
 │   ├── agents/
 │   │   └── data-analysis-agent.ts  # Agent definition & system prompt
 │   └── tools/

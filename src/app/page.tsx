@@ -35,6 +35,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
   ArrowUpIcon,
   BarChart3Icon,
@@ -112,6 +113,7 @@ function ToolImages({ output }: { output: Record<string, unknown> }) {
 export default function Home() {
   const [input, setInput] = useState<string>("");
   const [isResetting, setIsResetting] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
 
   const { messages, setMessages, sendMessage, status, stop, clearError } =
     useChat({
@@ -121,12 +123,49 @@ export default function Home() {
     });
 
   useEffect(() => {
+    let cancelled = false;
+
     const fetchMessages = async () => {
-      const res = await fetch("/api/chat");
-      const data = await res.json();
-      setMessages([...data]);
+      try {
+        const res = await fetch("/api/chat");
+        const data: unknown = await res.json();
+
+        if (!res.ok) {
+          const message =
+            typeof data === "object" &&
+            data !== null &&
+            "error" in data &&
+            typeof data.error === "string"
+              ? data.error
+              : "Unable to load the conversation.";
+          throw new Error(message);
+        }
+
+        if (!Array.isArray(data)) {
+          throw new Error("The conversation history response was invalid.");
+        }
+
+        if (!cancelled) {
+          setHistoryError(null);
+          setMessages(data);
+        }
+      } catch (error) {
+        console.error("Unable to load chat history", error);
+        if (!cancelled) {
+          setHistoryError(
+            error instanceof Error
+              ? error.message
+              : "Unable to load the conversation.",
+          );
+        }
+      }
     };
+
     fetchMessages();
+
+    return () => {
+      cancelled = true;
+    };
   }, [setMessages]);
 
   const handleSubmit = async (text?: string) => {
@@ -205,6 +244,14 @@ export default function Home() {
         </header>
 
         <div className="relative flex min-h-0 flex-1 flex-col">
+          {historyError && (
+            <div className="mx-auto w-full max-w-3xl px-4 pt-4 sm:px-6 md:px-0">
+              <Alert variant="destructive">
+                <AlertTitle>Unable to load chat history</AlertTitle>
+                <AlertDescription>{historyError}</AlertDescription>
+              </Alert>
+            </div>
+          )}
           {isEmpty ? (
             <section className="relative flex flex-1 flex-col items-center overflow-y-auto px-4 pb-8 pt-12 sm:px-8 sm:pt-16">
               <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,rgba(59,130,246,0.10),transparent_34%)]" />
