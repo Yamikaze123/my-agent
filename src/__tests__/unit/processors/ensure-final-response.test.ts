@@ -9,7 +9,9 @@ describe("EnsureFinalResponseProcessor", () => {
       processor.processInputStep!({
         stepNumber: 3,
         systemMessages: [],
-      } as Parameters<NonNullable<typeof processor.processInputStep>>[0]),
+      } as unknown as Parameters<
+        NonNullable<typeof processor.processInputStep>
+      >[0]),
     ).toEqual({});
   });
 
@@ -20,7 +22,9 @@ describe("EnsureFinalResponseProcessor", () => {
       processor.processInputStep!({
         stepNumber: 4,
         systemMessages: [],
-      } as Parameters<NonNullable<typeof processor.processInputStep>>[0]),
+      } as unknown as Parameters<
+        NonNullable<typeof processor.processInputStep>
+      >[0]),
     ).toEqual({
       tools: {},
       toolChoice: "none",

@@ -5,6 +5,7 @@ vi.mock("@/mastra", () => ({
     getAgentById: vi.fn().mockReturnValue({
       getMemory: vi.fn().mockReturnValue({
         recall: vi.fn().mockResolvedValue({ messages: [] }),
+        getThreadById: vi.fn().mockResolvedValue(null),
       }),
     }),
   },
@@ -26,8 +27,9 @@ vi.mock("ai", () => ({
 
 vi.mock("next/server", () => ({
   NextResponse: {
-    json: vi.fn((body, init) =>
-      new Response(JSON.stringify(body), { status: init?.status ?? 200 }),
+    json: vi.fn(
+      (body, init) =>
+        new Response(JSON.stringify(body), { status: init?.status ?? 200 }),
     ),
   },
 }));
@@ -157,9 +159,7 @@ describe("POST /api/chat", () => {
     const call = (handleChatStream as ReturnType<typeof vi.fn>).mock
       .calls[0][0];
     expect(call.agentId).toBe("data-analysis-agent");
-    expect(call.params.memory.resource).toMatch(
-      /^[0-9a-f-]{36}$/,
-    );
+    expect(call.params.memory.resource).toMatch(/^[0-9a-f-]{36}$/);
     expect(call.params.requestContext.toJSON()).toMatchObject({
       mastra__resourceId: call.params.memory.resource,
       mastra__threadId: call.params.memory.thread,

@@ -48,6 +48,18 @@ export type PermissionAction =
   | "run:execute"
   | "artifact:read";
 
+const permissionActionSchema = z.enum([
+  "chat:read",
+  "chat:write",
+  "memory:read",
+  "memory:write",
+  "dataset:read",
+  "dataset:write",
+  "run:read",
+  "run:execute",
+  "artifact:read",
+]);
+
 export type PermissionContext = {
   principal: {
     id: string;
@@ -83,6 +95,52 @@ export type PermissionContext = {
     approvalState: "not-required";
   };
 };
+
+export const permissionContextSchema = z
+  .object({
+    principal: z
+      .object({
+        id: z.uuid(),
+        kind: z.literal("server-issued-anonymous"),
+      })
+      .strict(),
+    tenant: z.object({ id: z.uuid() }).strict(),
+    resource: z
+      .object({
+        id: z.uuid(),
+        kind: z.literal("workspace"),
+      })
+      .strict(),
+    session: z
+      .object({
+        id: z.uuid(),
+        issuedAt: z.string().min(1),
+        expiresAt: z.string().min(1),
+      })
+      .strict(),
+    thread: z.object({ id: z.uuid() }).strict(),
+    permittedActions: z.array(permissionActionSchema),
+    datasetScope: z
+      .object({
+        resourceId: z.uuid(),
+        allowedDatasetIds: z.array(z.string().min(1)),
+      })
+      .strict(),
+    runScope: z
+      .object({
+        resourceId: z.uuid(),
+        allowedRunIds: z.array(z.string().min(1)),
+      })
+      .strict(),
+    risk: z
+      .object({
+        level: z.literal("low"),
+        approvalRequired: z.literal(false),
+        approvalState: z.literal("not-required"),
+      })
+      .strict(),
+  })
+  .strict();
 
 export type ResolvedPermissionContext = {
   permissionContext: PermissionContext;
@@ -329,6 +387,48 @@ export function createMastraRequestContext(
   requestContext.set(MASTRA_THREAD_ID_KEY, permissionContext.thread.id);
   requestContext.set("permissionContext", permissionContext);
   return requestContext;
+}
+
+export function getValidatedPermissionContext(
+  requestContext: RequestContext | undefined,
+): PermissionContext {
+  if (!requestContext) throw new AuthorizationError();
+
+  const parsed = permissionContextSchema.safeParse(
+    requestContext.get("permissionContext"),
+  );
+  if (!parsed.success) throw new AuthorizationError();
+
+  const resourceId = requestContext.get(MASTRA_RESOURCE_ID_KEY);
+  const threadId = requestContext.get(MASTRA_THREAD_ID_KEY);
+  const issuedAt = Date.parse(parsed.data.session.issuedAt);
+  const expiresAt = Date.parse(parsed.data.session.expiresAt);
+  if (
+    resourceId !== parsed.data.resource.id ||
+    threadId !== parsed.data.thread.id ||
+    !Number.isFinite(issuedAt) ||
+    !Number.isFinite(expiresAt) ||
+    issuedAt > Date.now() ||
+    expiresAt <= Date.now() ||
+    parsed.data.tenant.id !== parsed.data.resource.id ||
+    parsed.data.datasetScope.resourceId !== parsed.data.resource.id ||
+    parsed.data.runScope.resourceId !== parsed.data.resource.id
+  ) {
+    throw new AuthorizationError();
+  }
+
+  return parsed.data as PermissionContext;
+}
+
+export function requirePermission(
+  requestContext: RequestContext | undefined,
+  action: PermissionAction,
+): PermissionContext {
+  const permissionContext = getValidatedPermissionContext(requestContext);
+  if (!permissionContext.permittedActions.includes(action)) {
+    throw new AuthorizationError();
+  }
+  return permissionContext;
 }
 
 export function assertResourceOwnership(

@@ -67,20 +67,21 @@ const SUGGESTED_PROMPTS = [
     label: "Profile a dataset",
     description: "Understand shape, types, missing values, and distributions.",
     prompt:
-      "Generate a sample dataset of 200 students with names, ages, grades, and GPAs. Show a few example rows, summarize the data, identify missing values, and visualize the GPA distribution.",
+      "Profile the complete synthetic finance fixture using its default ticker and date selection: show its date range, tickers, missing values, summary statistics, and a visualization of the adjusted-close prices.",
     icon: FileSpreadsheetIcon,
   },
   {
     label: "Find patterns",
     description: "Explore clusters and relationships with a clear visual.",
     prompt:
-      "Create a scatter plot of 500 synthetic two-dimensional data points. Identify and color three natural groups in the data.",
+      "Compare the relationship between daily returns for two finance tickers, visualize the result, and explain the limitations of the analysis.",
     icon: BrainCircuitIcon,
   },
   {
     label: "Write Python",
     description: "Start with a small script and build from there.",
-    prompt: "Write a short Python program that prints a friendly greeting.",
+    prompt:
+      "Calculate and visualize a simple rolling average for a finance time series, then explain the result in plain language.",
     icon: Table2Icon,
   },
 ] as const;
@@ -88,7 +89,7 @@ const SUGGESTED_PROMPTS = [
 const CAPABILITIES = [
   { label: "Python-powered", icon: BrainCircuitIcon },
   { label: "Charts included", icon: BarChart3Icon },
-  { label: "Any dataset", icon: DatabaseIcon },
+  { label: "Governed finance data", icon: DatabaseIcon },
 ] as const;
 
 function ToolImages({ output }: { output: Record<string, unknown> }) {

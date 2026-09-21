@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   canonicalizeFinanceRows,
   financeFixture,
+  financeFixtureAvailability,
   financeFixtureManifest,
   getFinanceFixture,
   hashFinanceRows,
@@ -19,6 +20,13 @@ describe("finance fixture connector", () => {
     expect(hashFinanceRows(financeFixture.rows)).toBe(
       financeFixtureManifest.contentHash,
     );
+    expect(financeFixtureAvailability).toEqual({
+      fixtureId: "finance-regression",
+      version: "v1",
+      tickers: ["AAPL", "MSFT", "TSLA"],
+      startDate: "2024-12-31",
+      endDate: "2025-12-31",
+    });
   });
 
   it("uses a stable canonical representation for hashing", () => {
@@ -63,7 +71,7 @@ describe("finance fixture connector", () => {
 
   it("rejects an unavailable ticker", () => {
     expect(() => getFinanceFixture({ tickers: ["NOPE"] })).toThrow(
-      "is not available in fixture finance-regression@v1",
+      "Available tickers: AAPL, MSFT, TSLA",
     );
   });
 
@@ -83,6 +91,6 @@ describe("finance fixture connector", () => {
         startDate: "2026-01-01",
         endDate: "2026-01-31",
       }),
-    ).toThrow("requested fixture date range contains no rows");
+    ).toThrow("Available date range: 2024-12-31 through 2025-12-31");
   });
 });

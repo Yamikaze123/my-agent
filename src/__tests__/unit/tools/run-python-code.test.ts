@@ -5,10 +5,13 @@ const mockKill = vi.fn().mockResolvedValue(undefined);
 const mockCreate = vi.fn();
 
 vi.mock("@e2b/code-interpreter", () => ({
+  ALL_TRAFFIC: "0.0.0.0/0",
   Sandbox: { create: mockCreate },
 }));
 
 const { runPythonCodeTool } = await import("@/mastra/tools/run-python-code");
+const { createMastraRequestContext, resolvePermissionContext } =
+  await import("@/mastra/security/permission-context");
 
 type ToolOutput = {
   stdout: string;
@@ -18,7 +21,13 @@ type ToolOutput = {
 };
 
 async function execute(code: string): Promise<ToolOutput> {
-  const result = await runPythonCodeTool.execute!({ code }, {});
+  const permissionContext = resolvePermissionContext(
+    new Request("http://localhost/api/chat"),
+  ).permissionContext;
+  const result = await runPythonCodeTool.execute!(
+    { code },
+    { requestContext: createMastraRequestContext(permissionContext) },
+  );
   return result as ToolOutput;
 }
 
@@ -50,6 +59,21 @@ beforeEach(() => {
 });
 
 describe("runPythonCodeTool", () => {
+  it("fails closed without a validated RequestContext", async () => {
+    await expect(
+      runPythonCodeTool.execute!({ code: "print('blocked')" }, {}),
+    ).rejects.toThrow(/Unauthorized/);
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
+
+  it("blocks unsafe code before creating a sandbox", async () => {
+    const result = await execute("import subprocess\nsubprocess.run(['id'])");
+
+    expect(result.success).toBe(false);
+    expect(result.stderr).toContain("blocked");
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
+
   describe("successful execution", () => {
     it("returns stdout from code output", async () => {
       setupSandbox(makeExecution({ stdout: ["hello world"] }));
@@ -138,6 +162,19 @@ describe("runPythonCodeTool", () => {
         timeoutMs: 45_000,
         requestTimeoutMs: 30_000,
       });
+      expect(mockCreate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          network: expect.objectContaining({
+            allowPublicTraffic: false,
+            allowOut: expect.arrayContaining([
+              "query1.finance.yahoo.com",
+              "pypi.org",
+              "files.pythonhosted.org",
+            ]),
+            denyOut: ["0.0.0.0/0"],
+          }),
+        }),
+      );
     });
 
     it("returns an installation error without running user code", async () => {
@@ -269,6 +306,9 @@ describe("runPythonCodeTool", () => {
     it("has required tool metadata", () => {
       expect(runPythonCodeTool.id).toBe("run-python-code");
       expect(runPythonCodeTool.description).toBeTruthy();
+      expect(runPythonCodeTool.description).toContain(
+        "Never pass a DataFrame to pd.to_numeric",
+      );
     });
   });
 });

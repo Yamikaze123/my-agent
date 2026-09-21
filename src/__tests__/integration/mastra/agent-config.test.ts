@@ -59,9 +59,22 @@ describe("dataAnalysisAgent configuration", () => {
     expect(instructions).toContain(
       "Never silently substitute the fixture for ordinary market-data requests",
     );
+    expect(instructions).toContain(
+      "call get-finance-fixture with an empty object ({})",
+    );
+    expect(instructions).toContain(
+      "Never invent fixture tickers such as AAA, BBB, or CCC",
+    );
+    expect(instructions).toContain("do not repeat the same arguments");
     expect(instructions).toContain("threads=False");
     expect(instructions).toContain("yf.Ticker(ticker).history");
     expect(instructions).toContain("all-NaN");
+    expect(instructions).toContain(
+      "Never pass a DataFrame or two-dimensional array to pd.to_numeric",
+    );
+    expect(instructions).toContain(
+      "arg must be a list, tuple, 1-d array, or Series",
+    );
     expect(instructions).toContain(
       "Do not use one multi-ticker yf.download call",
     );

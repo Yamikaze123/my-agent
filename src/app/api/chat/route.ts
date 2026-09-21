@@ -5,10 +5,18 @@ import { mastra } from "@/mastra";
 import { NextResponse } from "next/server";
 import { MAX_AGENT_STEPS } from "@/mastra/config";
 import {
+  CHAT_POLICY_VERSION,
+  ChatGuardrailError,
+  redactChatMessages,
+  redactSensitiveText,
+  validateChatRequest,
+} from "@/mastra/security/chat-policy";
+import {
   AuthorizationError,
   ConfigurationError,
   cookieHeader,
   createMastraRequestContext,
+  requirePermission,
   resolvePermissionContext,
   rotateThread,
   sessionCookieName,
@@ -44,6 +52,31 @@ const AUTHORIZATION_FIELDS = new Set([
   "threadId",
   "user",
   "userId",
+  "permittedActions",
+  "datasetScope",
+  "runScope",
+  "approval",
+  "approvalState",
+  "risk",
+  "ownerResourceId",
+  "scope",
+  "model",
+  "modelId",
+  "tools",
+  "toolChoice",
+  "maxSteps",
+  "maxTokens",
+  "maxOutputTokens",
+  "temperature",
+  "topP",
+  "topK",
+  "system",
+  "instructions",
+  "providerOptions",
+  "modelSettings",
+  "requestContext",
+  "memory",
+  "headers",
 ]);
 
 function truncateForModel(value: string, maxLength: number): string {
@@ -132,7 +165,7 @@ function formatStreamError(error: unknown): string {
     return "The analysis reached the model provider's token rate limit after the tool step. The provider should reset the limit shortly; please retry the summary in about a minute. The Python execution itself was not the rate-limited operation.";
   }
 
-  console.error("Chat stream failed", errorText(error));
+  console.error("Chat stream failed", redactSensitiveText(errorText(error)));
   return "The analysis could not be completed. Please try again.";
 }
 
@@ -145,6 +178,17 @@ function removeClientAuthorizationFields(value: unknown): JsonRecord {
 
   return Object.fromEntries(
     Object.entries(value).filter(([key]) => !AUTHORIZATION_FIELDS.has(key)),
+  );
+}
+
+function guardrailResponse(error: ChatGuardrailError): Response {
+  return NextResponse.json(
+    {
+      error: error.userMessage,
+      code: error.code,
+      policyVersion: CHAT_POLICY_VERSION,
+    },
+    { status: error.status },
   );
 }
 
@@ -190,7 +234,7 @@ async function assertStoredThreadOwnership(
   resourceId: string,
 ): Promise<void> {
   const memory = await mastra.getAgentById("data-analysis-agent").getMemory();
-  if (!memory?.getThreadById) return;
+  if (!memory?.getThreadById) throw new AuthorizationError();
 
   const thread = await memory.getThreadById({ threadId });
   if (thread && thread.resourceId !== resourceId) {
@@ -202,6 +246,10 @@ export async function POST(req: Request) {
   let resolved: ReturnType<typeof resolvePermissionContext>;
   try {
     resolved = resolvePermissionContext(req);
+    requirePermission(
+      createMastraRequestContext(resolved.permissionContext),
+      "chat:write",
+    );
     await assertStoredThreadOwnership(
       resolved.permissionContext.thread.id,
       resolved.permissionContext.resource.id,
@@ -212,18 +260,25 @@ export async function POST(req: Request) {
     throw error;
   }
 
-  const params = removeClientAuthorizationFields(await req.json());
-  const modelSettings = isRecord(params.modelSettings)
-    ? { ...params.modelSettings }
-    : {};
-  const providerOptions = isRecord(params.providerOptions)
-    ? { ...params.providerOptions }
-    : {};
-
-  // The Azure deployment is backed by a newer model even though its deployment
-  // ID is "gpt-4o". Remove the generic setting because the OpenAI adapter maps
-  // it to max_tokens, which that deployment rejects.
-  delete modelSettings.maxOutputTokens;
+  let params: JsonRecord;
+  try {
+    const body = await req.json();
+    const validated = validateChatRequest(
+      removeClientAuthorizationFields(body),
+    );
+    // Only the validated message envelope is passed onward. AI SDK control,
+    // provider, scope, and arbitrary metadata fields remain server-owned.
+    params = { messages: validated.messages };
+  } catch (error) {
+    if (error instanceof ChatGuardrailError) return guardrailResponse(error);
+    return guardrailResponse(
+      new ChatGuardrailError(
+        "invalid_request",
+        "The chat request body is invalid.",
+        400,
+      ),
+    );
+  }
 
   const stream = await handleChatStream({
     mastra,
@@ -235,13 +290,10 @@ export async function POST(req: Request) {
       maxSteps: MAX_AGENT_STEPS,
       requestContext: createMastraRequestContext(resolved.permissionContext),
       modelSettings: {
-        ...modelSettings,
         maxRetries: MAX_MODEL_RETRIES,
       },
       providerOptions: {
-        ...providerOptions,
         openai: {
-          ...(isRecord(providerOptions.openai) ? providerOptions.openai : {}),
           maxCompletionTokens: MAX_COMPLETION_TOKENS,
         },
       },
@@ -267,6 +319,10 @@ export async function GET(req: Request) {
   let resolved: ReturnType<typeof resolvePermissionContext>;
   try {
     resolved = resolvePermissionContext(req);
+    requirePermission(
+      createMastraRequestContext(resolved.permissionContext),
+      "memory:read",
+    );
     await assertStoredThreadOwnership(
       resolved.permissionContext.thread.id,
       resolved.permissionContext.resource.id,
@@ -293,7 +349,7 @@ export async function GET(req: Request) {
     version: "v6",
   });
 
-  const res = NextResponse.json(uiMessages);
+  const res = NextResponse.json(redactChatMessages(uiMessages as unknown[]));
   return appendAuthCookies(res, req, resolved);
 }
 
@@ -303,6 +359,10 @@ export async function DELETE(req?: Request) {
   let resolved: ReturnType<typeof resolvePermissionContext>;
   try {
     resolved = rotateThread(resolvePermissionContext(request));
+    requirePermission(
+      createMastraRequestContext(resolved.permissionContext),
+      "chat:write",
+    );
   } catch (error) {
     if (error instanceof ConfigurationError) return configurationResponse();
     if (error instanceof AuthorizationError) return unauthorizedResponse();

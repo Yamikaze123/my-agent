@@ -45,6 +45,31 @@ if (
 
 const availableTickers = new Set(financeFixture.rows.map((row) => row.ticker));
 
+const fixtureStartDate = financeFixture.rows.reduce(
+  (earliest, row) => (row.date < earliest ? row.date : earliest),
+  financeFixture.rows[0].date,
+);
+const fixtureEndDate = financeFixture.rows.reduce(
+  (latest, row) => (row.date > latest ? row.date : latest),
+  financeFixture.rows[0].date,
+);
+
+export const financeFixtureAvailability = {
+  fixtureId: financeFixtureManifest.fixtureId,
+  version: financeFixtureManifest.version,
+  tickers: financeFixtureManifest.tickers,
+  startDate: fixtureStartDate,
+  endDate: fixtureEndDate,
+} as const;
+
+function fixtureAvailabilityHint(): string {
+  return (
+    `Available tickers: ${financeFixtureAvailability.tickers.join(", ")}. ` +
+    `Available date range: ${financeFixtureAvailability.startDate} through ${financeFixtureAvailability.endDate}. ` +
+    "For the complete fixture, omit tickers, startDate, and endDate."
+  );
+}
+
 for (const ticker of financeFixtureManifest.tickers) {
   if (!availableTickers.has(ticker)) {
     throw new Error(
@@ -69,7 +94,7 @@ export function getFinanceFixture(
   for (const ticker of tickers) {
     if (!availableTickers.has(ticker)) {
       throw new Error(
-        `Ticker ${ticker} is not available in fixture ${financeFixtureManifest.fixtureId}@${financeFixtureManifest.version}.`,
+        `Ticker ${ticker} is not available in fixture ${financeFixtureManifest.fixtureId}@${financeFixtureManifest.version}. ${fixtureAvailabilityHint()}`,
       );
     }
   }
@@ -84,7 +109,9 @@ export function getFinanceFixture(
     .sort(compareRows);
 
   if (rows.length === 0) {
-    throw new Error("The requested fixture date range contains no rows.");
+    throw new Error(
+      `The requested fixture date range contains no rows. ${fixtureAvailabilityHint()}`,
+    );
   }
 
   const dataset = {
