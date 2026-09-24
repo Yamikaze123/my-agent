@@ -6,11 +6,13 @@ Status: technical snapshot captured; behavioral results pending.
 
 ## Source state
 
-- Observed application commit:
-  9901766b0bcffd0705f80d238893c1f47b381018
-- Commit date: 2026-09-12
-- Commit message: feat: redesign data studio and harden analysis execution
-- Candidate Git tag: not created
+- Baseline Git tag: `pre-capstone-baseline-2026-09-13-latest`
+- Tagged application commit:
+  `70000881a6dee5f572547283716af69970f71008`
+- Commit date: 2026-09-13T09:24:18-04:00
+- Commit message: feat: establish current application baseline
+- Earlier observed snapshot commit before the rebased baseline tag:
+  `9901766b0bcffd0705f80d238893c1f47b381018`
 
 ## Current application
 
@@ -108,4 +110,5 @@ npm run build
 - [ ] At least one chart, one text-only response, and one error case have
       been reviewed.
 - [ ] No secrets or private data are present in the evidence.
-- [ ] The approved commit is tagged as the capstone baseline.
+- [x] The pre-capstone baseline commit is tagged as
+      `pre-capstone-baseline-2026-09-13-latest`.

@@ -9,6 +9,7 @@ import {
 } from "@/mastra/connectors/finance-fixture";
 
 const fixedRunId = "00000000-0000-4000-8000-000000000001";
+const fixedResourceId = "00000000-0000-4000-8000-000000000002";
 const fixedObservedAt = "2026-09-13T13:00:00.000Z";
 
 describe("finance fixture connector", () => {
@@ -40,6 +41,7 @@ describe("finance fixture connector", () => {
       tickers: ["AAPL"],
       startDate: "2025-01-01",
       endDate: "2025-03-31",
+      resourceId: fixedResourceId,
       runId: fixedRunId,
       observedAt: fixedObservedAt,
     });
@@ -53,6 +55,7 @@ describe("finance fixture connector", () => {
       datasetId: "finance-regression",
       version: "v1",
       contentHash: financeFixtureManifest.contentHash,
+      resourceId: fixedResourceId,
     });
     expect(result.provenance).toMatchObject({
       runId: fixedRunId,
@@ -65,19 +68,22 @@ describe("finance fixture connector", () => {
         fixtureId: "finance-regression",
         fixtureVersion: "v1",
         contentHash: financeFixtureManifest.contentHash,
+        observedAt: fixedObservedAt,
+        freshness: "static",
       },
     });
   });
 
   it("rejects an unavailable ticker", () => {
-    expect(() => getFinanceFixture({ tickers: ["NOPE"] })).toThrow(
-      "Available tickers: AAPL, MSFT, TSLA",
-    );
+    expect(() =>
+      getFinanceFixture({ tickers: ["NOPE"], resourceId: fixedResourceId }),
+    ).toThrow("Available tickers: AAPL, MSFT, TSLA");
   });
 
   it("rejects an invalid date range", () => {
     expect(() =>
       getFinanceFixture({
+        resourceId: fixedResourceId,
         startDate: "2025-03-31",
         endDate: "2025-01-31",
       }),
@@ -87,6 +93,7 @@ describe("finance fixture connector", () => {
   it("rejects a date range with no matching rows", () => {
     expect(() =>
       getFinanceFixture({
+        resourceId: fixedResourceId,
         tickers: ["AAPL"],
         startDate: "2026-01-01",
         endDate: "2026-01-31",

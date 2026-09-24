@@ -24,8 +24,14 @@ export const getFinanceFixtureTool = createTool({
     },
   },
   execute: async (input, context) => {
-    requirePermission(context?.requestContext, "dataset:read");
-    return getFinanceFixture(input);
+    const permissionContext = requirePermission(
+      context?.requestContext,
+      "dataset:read",
+    );
+    return getFinanceFixture({
+      ...input,
+      resourceId: permissionContext.resource.id,
+    });
   },
   toModelOutput: (output) => ({
     type: "json" as const,

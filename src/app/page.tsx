@@ -74,7 +74,7 @@ const SUGGESTED_PROMPTS = [
     label: "Find patterns",
     description: "Explore clusters and relationships with a clear visual.",
     prompt:
-      "Compare the relationship between daily returns for two finance tickers, visualize the result, and explain the limitations of the analysis.",
+      "Compare the relationship between daily returns for two finance tickers (AAPL and MSFT), visualize the result, and explain the limitations of the analysis.",
     icon: BrainCircuitIcon,
   },
   {

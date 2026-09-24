@@ -11,6 +11,7 @@ function authorizedContext() {
   ).permissionContext;
   return {
     requestContext: createMastraRequestContext(permissionContext),
+    resourceId: permissionContext.resource.id,
   };
 }
 
@@ -30,13 +31,14 @@ describe("getFinanceFixtureTool", () => {
   });
 
   it("returns fixture rows and provenance to the application", async () => {
+    const context = authorizedContext();
     const result = (await getFinanceFixtureTool.execute!(
       {
         tickers: ["MSFT"],
         startDate: "2025-01-01",
         endDate: "2025-02-28",
       },
-      authorizedContext(),
+      context,
     )) as Awaited<
       ReturnType<
         typeof import("@/mastra/connectors/finance-fixture").getFinanceFixture
@@ -50,6 +52,7 @@ describe("getFinanceFixtureTool", () => {
     expect(result.provenance.dataset.contentHash).toMatch(
       /^sha256:[0-9a-f]{64}$/,
     );
+    expect(result.dataset.resourceId).toBe(context.resourceId);
   });
 
   it("fails closed without a validated RequestContext", async () => {

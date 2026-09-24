@@ -86,7 +86,7 @@ function compareRows(left: FinancePriceRow, right: FinancePriceRow): number {
 }
 
 export function getFinanceFixture(
-  input: FinanceFixtureRequest = {},
+  input: FinanceFixtureRequest,
 ): FinanceFixtureResult {
   const query = financeFixtureRequestSchema.parse(input);
   const tickers = query.tickers ?? financeFixtureManifest.tickers;
@@ -118,7 +118,9 @@ export function getFinanceFixture(
     datasetId: financeFixture.fixtureId,
     version: financeFixture.version,
     contentHash: computedHash,
+    resourceId: query.resourceId,
   };
+  const observedAt = query.observedAt ?? new Date().toISOString();
   const source = {
     type: "fixture" as const,
     connector: "finance-fixture",
@@ -127,10 +129,12 @@ export function getFinanceFixture(
     fixtureId: financeFixture.fixtureId,
     fixtureVersion: financeFixture.version,
     contentHash: computedHash,
+    observedAt,
+    freshness: "static" as const,
   };
   const provenance = {
     runId: query.runId ?? randomUUID(),
-    observedAt: query.observedAt ?? new Date().toISOString(),
+    observedAt,
     dataset,
     source,
   };
