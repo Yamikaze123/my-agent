@@ -14,6 +14,7 @@ import {
 import {
   AuthorizationError,
   ConfigurationError,
+  clearCookieHeader,
   cookieHeader,
   createMastraRequestContext,
   requirePermission,
@@ -212,11 +213,20 @@ function appendAuthCookies(
   return response;
 }
 
-function unauthorizedResponse(): Response {
-  return NextResponse.json(
+function unauthorizedResponse(request: Request): Response {
+  const response = NextResponse.json(
     { error: "Unauthorized session context." },
-    { status: 401 },
+    { status: 401, headers: { "Cache-Control": "no-store" } },
   );
+  response.headers.append(
+    "Set-Cookie",
+    clearCookieHeader(sessionCookieName, request),
+  );
+  response.headers.append(
+    "Set-Cookie",
+    clearCookieHeader(threadCookieName, request),
+  );
+  return response;
 }
 
 function configurationResponse(): Response {
@@ -256,7 +266,7 @@ export async function POST(req: Request) {
     );
   } catch (error) {
     if (error instanceof ConfigurationError) return configurationResponse();
-    if (error instanceof AuthorizationError) return unauthorizedResponse();
+    if (error instanceof AuthorizationError) return unauthorizedResponse(req);
     throw error;
   }
 
@@ -329,7 +339,7 @@ export async function GET(req: Request) {
     );
   } catch (error) {
     if (error instanceof ConfigurationError) return configurationResponse();
-    if (error instanceof AuthorizationError) return unauthorizedResponse();
+    if (error instanceof AuthorizationError) return unauthorizedResponse(req);
     throw error;
   }
 
@@ -365,7 +375,8 @@ export async function DELETE(req?: Request) {
     );
   } catch (error) {
     if (error instanceof ConfigurationError) return configurationResponse();
-    if (error instanceof AuthorizationError) return unauthorizedResponse();
+    if (error instanceof AuthorizationError)
+      return unauthorizedResponse(request);
     throw error;
   }
 

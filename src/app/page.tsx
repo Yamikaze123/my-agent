@@ -92,6 +92,8 @@ const CAPABILITIES = [
   { label: "Governed finance data", icon: DatabaseIcon },
 ] as const;
 
+const MAX_HISTORY_AUTH_RECOVERY_ATTEMPTS = 1;
+
 function ToolImages({ output }: { output: Record<string, unknown> }) {
   const images = output?.images as string[] | undefined;
   if (!images || images.length === 0) return null;
@@ -128,27 +130,46 @@ export default function Home() {
 
     const fetchMessages = async () => {
       try {
-        const res = await fetch("/api/chat");
-        const data: unknown = await res.json();
+        for (
+          let attempt = 0;
+          attempt <= MAX_HISTORY_AUTH_RECOVERY_ATTEMPTS;
+          attempt += 1
+        ) {
+          const res = await fetch("/api/chat", {
+            cache: "no-store",
+            credentials: "same-origin",
+          });
+          const data: unknown = await res.json();
 
-        if (!res.ok) {
-          const message =
-            typeof data === "object" &&
-            data !== null &&
-            "error" in data &&
-            typeof data.error === "string"
-              ? data.error
-              : "Unable to load the conversation.";
-          throw new Error(message);
-        }
+          // A 401 response expires stale legacy/session cookies. Retry once so
+          // the API can issue a fresh anonymous session without user action.
+          if (
+            res.status === 401 &&
+            attempt < MAX_HISTORY_AUTH_RECOVERY_ATTEMPTS
+          ) {
+            continue;
+          }
 
-        if (!Array.isArray(data)) {
-          throw new Error("The conversation history response was invalid.");
-        }
+          if (!res.ok) {
+            const message =
+              typeof data === "object" &&
+              data !== null &&
+              "error" in data &&
+              typeof data.error === "string"
+                ? data.error
+                : "Unable to load the conversation.";
+            throw new Error(message);
+          }
 
-        if (!cancelled) {
-          setHistoryError(null);
-          setMessages(data);
+          if (!Array.isArray(data)) {
+            throw new Error("The conversation history response was invalid.");
+          }
+
+          if (!cancelled) {
+            setHistoryError(null);
+            setMessages(data);
+          }
+          return;
         }
       } catch (error) {
         console.error("Unable to load chat history", error);

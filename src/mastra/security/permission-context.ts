@@ -458,5 +458,20 @@ export function cookieHeader(
     .join("; ");
 }
 
+export function clearCookieHeader(name: string, request: Request): string {
+  const secure = new URL(request.url).protocol === "https:";
+  return [
+    `${name}=`,
+    "Path=/",
+    "HttpOnly",
+    "SameSite=Lax",
+    "Max-Age=0",
+    "Expires=Thu, 01 Jan 1970 00:00:00 GMT",
+    secure ? "Secure" : "",
+  ]
+    .filter(Boolean)
+    .join("; ");
+}
+
 export const sessionCookieName = SESSION_COOKIE;
 export const threadCookieName = THREAD_COOKIE;

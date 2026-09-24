@@ -214,6 +214,8 @@ describe("thread ID cookie parsing", () => {
     const response = await POST(req);
 
     expect(response.status).toBe(401);
+    expect(response.headers.get("Set-Cookie")).toContain("session_id=;");
+    expect(response.headers.get("Set-Cookie")).toContain("thread_id=;");
     expect(handleChatStream).not.toHaveBeenCalled();
   });
 });

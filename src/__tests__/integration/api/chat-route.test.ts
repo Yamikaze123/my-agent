@@ -299,6 +299,8 @@ describe("GET /api/chat — message history", () => {
     );
 
     expect(response.status).toBe(401);
+    expect(response.headers.get("Set-Cookie")).toContain("session_id=;");
+    expect(response.headers.get("Set-Cookie")).toContain("thread_id=;");
     expect(mockRecall).not.toHaveBeenCalled();
   });
 
