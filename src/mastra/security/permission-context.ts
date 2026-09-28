@@ -314,6 +314,7 @@ function createPermissionContext(
       "memory:read",
       "memory:write",
       "dataset:read",
+      "dataset:write",
       "run:read",
       "run:execute",
       "artifact:read",

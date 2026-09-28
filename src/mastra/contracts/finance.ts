@@ -282,6 +282,34 @@ export const schemaFieldSchema = z
   })
   .strict();
 
+export const datasetCatalogEntrySchema = z
+  .object({
+    dataset: datasetRefSchema,
+    source: dataSourceSchema,
+    schema: z.array(schemaFieldSchema).max(32),
+    rowCount: boundedCountSchema,
+    createdAt: isoTimestampSchema,
+    expiresAt: isoTimestampSchema,
+  })
+  .strict()
+  .superRefine((entry, ctx) => {
+    if (entry.schema.length === 0) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["schema"],
+        message: "A catalog dataset must contain at least one field.",
+      });
+    }
+
+    if (Date.parse(entry.expiresAt) <= Date.parse(entry.createdAt)) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["expiresAt"],
+        message: "Dataset expiry must follow its creation time.",
+      });
+    }
+  });
+
 const numericSummarySchema = z
   .object({
     count: boundedCountSchema,
@@ -773,6 +801,7 @@ export type FinanceFixtureRequest = z.infer<typeof financeFixtureRequestSchema>;
 export type FinanceFixtureResult = z.infer<typeof financeFixtureResultSchema>;
 export type DateRange = z.infer<typeof dateRangeSchema>;
 export type SchemaField = z.infer<typeof schemaFieldSchema>;
+export type DatasetCatalogEntry = z.infer<typeof datasetCatalogEntrySchema>;
 export type DataProfile = z.infer<typeof dataProfileSchema>;
 export type QualityRule = z.infer<typeof qualityRuleSchema>;
 export type QualityFinding = z.infer<typeof qualityFindingSchema>;
