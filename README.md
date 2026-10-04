@@ -1,6 +1,6 @@
 # Data Analysis Agent
 
-An AI-powered data analysis assistant built with [Next.js](https://nextjs.org), [Mastra](https://mastra.ai), and [OpenRouter](https://openrouter.ai). Chat with an agent that can write and execute Python code to analyze data, generate visualizations, and fetch stock market data — all in the browser.
+An AI-powered data analysis assistant built with [Next.js](https://nextjs.org), [Mastra](https://mastra.ai), and Azure OpenAI. Chat with an agent that can write and execute Python code to analyze data, generate visualizations, and fetch stock market data — all in the browser.
 
 ## Features
 
@@ -13,8 +13,8 @@ An AI-powered data analysis assistant built with [Next.js](https://nextjs.org), 
 ## Prerequisites
 
 - **Node.js** >= 22.13.0
-- **pnpm** (recommended) or npm
-- An **OpenRouter API key** — get one at [openrouter.ai/keys](https://openrouter.ai/keys)
+- **pnpm** 8.15.7 or a compatible pnpm 8 release
+- An **Azure OpenAI API key**; the current resource and deployment defaults are defined in `src/mastra/agents/data-analysis-agent.ts`
 - An **E2B API key** (free tier, no credit card) — get one at [e2b.dev/dashboard](https://e2b.dev/dashboard?tab=keys)
 - A **Supabase PostgreSQL database** — create a project at [supabase.com](https://supabase.com), then go to **Settings > Database** and copy the **Transaction pooler** connection password
 
@@ -37,7 +37,7 @@ An AI-powered data analysis assistant built with [Next.js](https://nextjs.org), 
    Then edit `.env`:
 
    ```
-   OPENROUTER_API_KEY=<your_openrouter_api_key>
+   AZURE_OPENAI_API_KEY=<your_azure_openai_api_key>
    E2B_API_KEY=<your_e2b_api_key>
    DATABASE_HOST=<your_supabase_transaction_pooler_host>
    DATABASE_PORT=6543

@@ -22,7 +22,6 @@
     "@mastra/memory": "^1.15.0",
     "@mastra/observability": "^1.9.0",
     "@mastra/pg": "^1.9.0",
-    "@openrouter/ai-sdk-provider": "^2.5.1",
     "@radix-ui/react-use-controllable-state": "^1.2.2",
     "@rive-app/react-webgl2": "^4.27.3",
     "@streamdown/cjk": "^1.0.3",

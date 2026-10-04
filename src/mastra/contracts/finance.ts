@@ -666,7 +666,9 @@ export const analysisRunResultSchema = z
   .object({
     runId: resourceIdSchema,
     resourceId: resourceIdSchema,
-    tenantId: resourceIdSchema,
+    // The deterministic in-process core workflow has no separate tenant or
+    // sandbox/provider lifecycle. Durable runs may populate these fields.
+    tenantId: resourceIdSchema.optional(),
     dataset: datasetRefSchema,
     status: runStatusSchema,
     idempotencyKey: z.string().min(1).max(256),
@@ -681,8 +683,8 @@ export const analysisRunResultSchema = z
     completedAt: isoTimestampSchema.optional(),
     durationMs: boundedCountSchema.optional(),
     retryCount: boundedCountSchema,
-    sandboxOutcome: sandboxOutcomeSchema,
-    providerOutcome: providerOutcomeSchema,
+    sandboxOutcome: sandboxOutcomeSchema.optional(),
+    providerOutcome: providerOutcomeSchema.optional(),
     error: runErrorSchema.optional(),
   })
   .strict()

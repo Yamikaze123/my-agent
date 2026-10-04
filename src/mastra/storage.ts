@@ -1,5 +1,6 @@
 import { PostgresStore } from "@mastra/pg";
 import { Memory } from "@mastra/memory";
+import { requiredEnvironmentVariable } from "./config";
 
 // Extend the global type to include our instances
 declare global {
@@ -10,18 +11,13 @@ declare global {
 // Get or create the PostgresStore instance
 function getPgStore(): PostgresStore {
   if (!global.pgStore) {
-    if (!process.env.DATABASE_PASSWORD) {
-      throw new Error(
-        "DATABASE_PASSWORD is not defined in environment variables",
-      );
-    }
     global.pgStore = new PostgresStore({
       id: "pg-storage",
-      host: process.env.DATABASE_HOST || "aws-1-us-west-2.pooler.supabase.com",
+      host: requiredEnvironmentVariable("DATABASE_HOST"),
       port: process.env.DATABASE_PORT || "6543",
       database: "postgres",
-      user: process.env.DATABASE_USER || "postgres.ckxyksujagxjygdnbmbn",
-      password: process.env.DATABASE_PASSWORD,
+      user: requiredEnvironmentVariable("DATABASE_USER"),
+      password: requiredEnvironmentVariable("DATABASE_PASSWORD"),
     });
   }
   return global.pgStore;

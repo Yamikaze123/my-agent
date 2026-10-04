@@ -1,6 +1,6 @@
 import type { MastraDBMessage } from "@mastra/core/agent/message-list";
 
-export const CHAT_POLICY_VERSION = "2026-09-20";
+export const CHAT_POLICY_VERSION = "2026-10-04";
 
 export const CHAT_LIMITS = {
   maxMessages: 24,
@@ -95,7 +95,7 @@ function normalizeForMatching(value: string): string {
 }
 
 function textFromUnknown(value: unknown, depth = 0): string {
-  if (depth > 5 || value === null || value === undefined) return "";
+  if (depth > 8 || value === null || value === undefined) return "";
   if (typeof value === "string") return value;
   if (typeof value !== "object") return "";
 
@@ -113,7 +113,10 @@ function textFromUnknown(value: unknown, depth = 0): string {
     "value",
     "output",
     "result",
+    "rows",
+    "data",
     "reasoning",
+    "toolInvocation",
     "toolInvocations",
   ];
   return textFields
@@ -205,10 +208,41 @@ export function redactChatMessages(messages: unknown[]): unknown[] {
   return redactStructuredValue(messages) as unknown[];
 }
 
+const MAX_MODEL_HISTORY_OUTPUT_LENGTH = 8_000;
+
+function truncateModelHistory(value: string): string {
+  if (value.length <= MAX_MODEL_HISTORY_OUTPUT_LENGTH) return value;
+  return `${value.slice(0, MAX_MODEL_HISTORY_OUTPUT_LENGTH)}\n[truncated before being sent to the model]`;
+}
+
+function compactModelHistory(value: unknown): unknown {
+  if (value instanceof Date) return value;
+  if (Array.isArray(value)) return value.map(compactModelHistory);
+  if (value === null || typeof value !== "object") return value;
+
+  const record = value as JsonRecord;
+  const compacted: JsonRecord = {};
+  for (const [key, child] of Object.entries(record)) {
+    if (key === "images" && Array.isArray(child)) {
+      compacted.images = [];
+      compacted.imageCount = child.length;
+      continue;
+    }
+    if ((key === "stdout" || key === "stderr") && typeof child === "string") {
+      compacted[key] = truncateModelHistory(child);
+      continue;
+    }
+    compacted[key] = compactModelHistory(child);
+  }
+  return compacted;
+}
+
 export function redactMastraMessages(
   messages: MastraDBMessage[],
 ): MastraDBMessage[] {
-  return redactStructuredValue(messages) as MastraDBMessage[];
+  return compactModelHistory(
+    redactStructuredValue(messages),
+  ) as MastraDBMessage[];
 }
 
 function containsUnsupportedAttachment(message: JsonRecord): boolean {

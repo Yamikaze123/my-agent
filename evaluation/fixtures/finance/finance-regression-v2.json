@@ -1,0 +1,29 @@
+{
+  "fixtureId": "finance-regression",
+  "version": "v2",
+  "description": "Synthetic monthly finance prices with irregular observations and a drawdown/recovery episode for metric validation.",
+  "sourceType": "synthetic",
+  "frequency": "monthly",
+  "currency": "USD",
+  "priceField": "adjusted_close",
+  "rows": [
+    { "ticker": "AAPL", "date": "2024-12-31", "close": 100 },
+    { "ticker": "AAPL", "date": "2025-01-31", "close": 112 },
+    { "ticker": "AAPL", "date": "2025-03-31", "close": 72 },
+    { "ticker": "AAPL", "date": "2025-04-30", "close": 90 },
+    { "ticker": "AAPL", "date": "2025-06-30", "close": 126 },
+    { "ticker": "AAPL", "date": "2025-08-29", "close": 118 },
+    { "ticker": "MSFT", "date": "2024-12-31", "close": 200 },
+    { "ticker": "MSFT", "date": "2025-01-31", "close": 220 },
+    { "ticker": "MSFT", "date": "2025-03-31", "close": 180 },
+    { "ticker": "MSFT", "date": "2025-04-30", "close": 210 },
+    { "ticker": "MSFT", "date": "2025-06-30", "close": 260 },
+    { "ticker": "MSFT", "date": "2025-08-29", "close": 250 },
+    { "ticker": "TSLA", "date": "2024-12-31", "close": 250 },
+    { "ticker": "TSLA", "date": "2025-01-31", "close": 300 },
+    { "ticker": "TSLA", "date": "2025-03-31", "close": 150 },
+    { "ticker": "TSLA", "date": "2025-04-30", "close": 225 },
+    { "ticker": "TSLA", "date": "2025-06-30", "close": 330 },
+    { "ticker": "TSLA", "date": "2025-08-29", "close": 280 }
+  ]
+}

@@ -273,6 +273,29 @@ describe("shared finance contracts", () => {
     ).toMatchObject({ variant: "governed", status: "completed" });
   });
 
+  it("accepts an in-process core result without durable lifecycle placeholders", () => {
+    expect(
+      analysisRunResultSchema.parse({
+        runId,
+        resourceId,
+        dataset,
+        status: "completed",
+        idempotencyKey: "resource/task/source/plan",
+        metrics: [metric],
+        stdoutPreview: "",
+        stderrPreview: "",
+        artifacts: [],
+        provenance,
+        createdAt: observedAt,
+        retryCount: 0,
+      }),
+    ).toMatchObject({
+      status: "completed",
+      resourceId,
+      retryCount: 0,
+    });
+  });
+
   it("fails closed for invalid bounded or approval states", () => {
     expect(
       dataProfileSchema.safeParse({

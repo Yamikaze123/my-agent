@@ -1,5 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 
+vi.stubEnv("AZURE_OPENAI_API_KEY", "test-api-key");
+
 vi.mock("@/mastra/storage", () => ({
   storage: {},
   memory: {
@@ -7,12 +9,6 @@ vi.mock("@/mastra/storage", () => ({
     saveMessages: vi.fn(),
     recall: vi.fn(),
   },
-}));
-
-vi.mock("@openrouter/ai-sdk-provider", () => ({
-  createOpenRouter: vi.fn(() => ({
-    chat: vi.fn(() => ({ modelId: "tencent/hy3-preview:free" })),
-  })),
 }));
 
 const { dataAnalysisAgent } =

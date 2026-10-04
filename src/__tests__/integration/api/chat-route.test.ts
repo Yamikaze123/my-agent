@@ -140,7 +140,7 @@ describe("POST /api/chat — streaming response", () => {
     expect(response.status).toBe(422);
     expect(await response.json()).toMatchObject({
       code: "prompt_injection",
-      policyVersion: "2026-09-20",
+      policyVersion: "2026-10-04",
     });
     expect(handleChatStream).not.toHaveBeenCalled();
   });

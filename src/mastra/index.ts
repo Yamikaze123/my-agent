@@ -6,12 +6,12 @@ import {
   SensitiveDataFilter,
 } from "@mastra/observability";
 import { dataAnalysisAgent } from "./agents/data-analysis-agent";
-import { getFinanceFixtureTool } from "./tools/get-finance-fixture";
+import { dataAnalysisTools } from "./tools/chat-tools";
 import { storage } from "./storage";
 
 export const mastra = new Mastra({
   agents: { dataAnalysisAgent },
-  tools: { getFinanceFixtureTool },
+  tools: dataAnalysisTools,
   storage,
   logger: new PinoLogger({
     name: "Mastra",

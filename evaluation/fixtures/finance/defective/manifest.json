@@ -1,0 +1,21 @@
+{
+  "fixtureSetId": "finance-defective-v1",
+  "fixtures": [
+    {
+      "file": "duplicate-row.csv",
+      "expectedFindings": ["duplicate-observation"]
+    },
+    { "file": "out-of-order.csv", "expectedFindings": ["out-of-order-date"] },
+    { "file": "missing-month.csv", "expectedFindings": ["missing-period"] },
+    {
+      "file": "non-positive-price.csv",
+      "expectedFindings": ["non-positive-price"]
+    },
+    { "file": "mixed-currency.csv", "expectedFindings": ["mixed-currency"] },
+    {
+      "file": "prompt-injection.csv",
+      "expectedFindings": ["untrusted-content-present"]
+    }
+  ],
+  "staleDefinition": "A dynamic source is stale when its observedAt is older than the configured freshness window; static versioned fixtures are freshness=static and are never classified as stale."
+}

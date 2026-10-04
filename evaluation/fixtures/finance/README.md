@@ -14,6 +14,17 @@ This fixture is for evaluation, offline development, and explicitly
 reproducible requests. Ordinary user finance requests should continue to use
 the live `yfinance` connector, including historical calendar ranges such as 2025.
 
+`finance-regression-v2.json` is a held-out-quality candidate with irregular
+month spacing and a pronounced drawdown/recovery episode. Its manifest is
+`finance-regression-v2-manifest.json`; compute and record its content hash
+before freezing the evaluation batch.
+
+The `defective/` directory contains separate quality fixtures for duplicate
+rows, out-of-order dates, a missing month, non-positive prices, mixed currency,
+and prompt-injection text. Expected findings are recorded in its manifest.
+Static fixtures use `freshness=static`; “stale” applies only to dynamic sources
+whose `observedAt` exceeds the configured freshness window.
+
 The December 2024 anchor allows a consumer to calculate twelve monthly
 returns for the 2025 period. The source is synthetic and should not be used
 for investment decisions.

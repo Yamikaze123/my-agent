@@ -74,6 +74,8 @@ describe("chat policy", () => {
     expect(redacted.resourceId).toBe(resourceId);
     expect(redacted.threadId).toBe(threadId);
     expect(redacted.id).toBe(message.id);
+    expect(redacted.createdAt).toBeInstanceOf(Date);
+    expect(redacted.createdAt.toISOString()).toBe("2026-09-20T00:00:00.000Z");
     expect(redacted.content.parts[0]).toMatchObject({
       text: "Use [REDACTED_EMAIL] for the analysis",
     });
