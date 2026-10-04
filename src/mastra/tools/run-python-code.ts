@@ -4,7 +4,7 @@ import { ALL_TRAFFIC, Sandbox } from "@e2b/code-interpreter";
 import { redactSensitiveText } from "../security/chat-policy";
 import { requirePermission } from "../security/permission-context";
 import {
-  APPROVED_OUTBOUND_HOSTS,
+  approvedOutboundHosts,
   CODE_EXECUTION_LIMITS,
   CodePolicyError,
   truncateExecutionOutput,
@@ -18,6 +18,9 @@ const CODE_EXECUTION_TIMEOUT_MS = CODE_EXECUTION_LIMITS.executionTimeoutMs;
 
 let activeExecutions = 0;
 
+// Used only on the stock E2B image. A prebuilt template built with
+// sandbox/build-analysis-template.mjs already contains these packages, so the
+// install step and the PyPI hosts are skipped when E2B_SANDBOX_TEMPLATE is set.
 const INSTALL_ANALYSIS_DEPENDENCIES =
   "import importlib.util, subprocess, sys; " +
   "missing = [p for p in ['yfinance', 'tabulate'] " +
@@ -26,6 +29,15 @@ const INSTALL_ANALYSIS_DEPENDENCIES =
   "'--disable-pip-version-check', '--no-input', '--index-url', " +
   "'https://pypi.org/simple', '--timeout', '15', " +
   "'--retries', '1', '-q', *missing]) if missing else None";
+
+/**
+ * The prebuilt sandbox template name, read per execution so deployments and
+ * tests can switch modes without reloading the module.
+ */
+export function configuredSandboxTemplate(): string | undefined {
+  const value = process.env.E2B_SANDBOX_TEMPLATE?.trim();
+  return value ? value : undefined;
+}
 
 function truncateForModel(value: string, maxLength: number): string {
   if (value.length <= maxLength) return value;
@@ -79,6 +91,40 @@ function isEscapedLineBreakSyntaxError(
   );
 }
 
+type CodeSandbox = Awaited<ReturnType<typeof Sandbox.create>> & {
+  runCode: (
+    source: string,
+    options: {
+      timeoutMs: number;
+      requestTimeoutMs: number;
+    },
+  ) => Promise<{
+    logs: { stdout: string[]; stderr: string[] };
+    results: Array<{ png?: string }>;
+    error: { name: string; value: string; traceback: string } | null;
+  }>;
+};
+
+async function createSandbox(
+  template: string | undefined,
+): Promise<CodeSandbox> {
+  const options = {
+    apiKey: process.env.E2B_API_KEY,
+    requestTimeoutMs: SANDBOX_REQUEST_TIMEOUT_MS,
+    network: {
+      allowOut: [
+        ...approvedOutboundHosts({ prebuiltTemplate: template !== undefined }),
+      ],
+      denyOut: [ALL_TRAFFIC],
+      allowPublicTraffic: false,
+    },
+  };
+  const sandbox = template
+    ? await Sandbox.create(template, options)
+    : await Sandbox.create(options);
+  return sandbox as CodeSandbox;
+}
+
 export const runPythonCodeTool = createTool({
   id: "run-python-code",
   description:
@@ -128,31 +174,11 @@ export const runPythonCodeTool = createTool({
     }
 
     activeExecutions += 1;
-    type CodeSandbox = Awaited<ReturnType<typeof Sandbox.create>> & {
-      runCode: (
-        source: string,
-        options: {
-          timeoutMs: number;
-          requestTimeoutMs: number;
-        },
-      ) => Promise<{
-        logs: { stdout: string[]; stderr: string[] };
-        results: Array<{ png?: string }>;
-        error: { name: string; value: string; traceback: string } | null;
-      }>;
-    };
+    const template = configuredSandboxTemplate();
 
     let sbx: CodeSandbox;
     try {
-      sbx = (await Sandbox.create({
-        apiKey: process.env.E2B_API_KEY,
-        requestTimeoutMs: SANDBOX_REQUEST_TIMEOUT_MS,
-        network: {
-          allowOut: [...APPROVED_OUTBOUND_HOSTS],
-          denyOut: [ALL_TRAFFIC],
-          allowPublicTraffic: false,
-        },
-      })) as CodeSandbox;
+      sbx = await createSandbox(template);
     } catch (error) {
       activeExecutions -= 1;
       throw error;
@@ -165,21 +191,24 @@ export const runPythonCodeTool = createTool({
           requestTimeoutMs: SANDBOX_REQUEST_TIMEOUT_MS,
         });
 
-      // Install packages not included in the default E2B sandbox
-      const installation = await runCode(INSTALL_ANALYSIS_DEPENDENCIES);
-      if (installation.error) {
-        return {
-          stdout: safeExecutionText(
-            installation.logs.stdout.join("\n"),
-            CODE_EXECUTION_LIMITS.maxStdoutLength,
-          ),
-          stderr: safeExecutionText(
-            executionErrorText(installation.error),
-            CODE_EXECUTION_LIMITS.maxStderrLength,
-          ),
-          images: [],
-          success: false,
-        };
+      // The stock image lacks the finance packages; a prebuilt template has
+      // them baked in, so skip the install round trip entirely.
+      if (!template) {
+        const installation = await runCode(INSTALL_ANALYSIS_DEPENDENCIES);
+        if (installation.error) {
+          return {
+            stdout: safeExecutionText(
+              installation.logs.stdout.join("\n"),
+              CODE_EXECUTION_LIMITS.maxStdoutLength,
+            ),
+            stderr: safeExecutionText(
+              executionErrorText(installation.error),
+              CODE_EXECUTION_LIMITS.maxStderrLength,
+            ),
+            images: [],
+            success: false,
+          };
+        }
       }
 
       let execution = await runCode(validatedCode);

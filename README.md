@@ -40,6 +40,7 @@ An AI-powered data analysis assistant built with [Next.js](https://nextjs.org), 
    ```
    AZURE_OPENAI_API_KEY=<your_azure_openai_api_key>
    E2B_API_KEY=<your_e2b_api_key>
+   E2B_SANDBOX_TEMPLATE=
    DATABASE_HOST=<your_supabase_transaction_pooler_host>
    DATABASE_PORT=6543
    DATABASE_USER=<your_supabase_transaction_pooler_user>
@@ -47,15 +48,32 @@ An AI-powered data analysis assistant built with [Next.js](https://nextjs.org), 
    SESSION_SIGNING_SECRET=<long_random_server_only_secret>
    ```
 
+3. **Build the sandbox template (recommended)**
+
+   Without a template the Python tool runs on E2B's stock image and installs
+   `yfinance` and `tabulate` on every execution, which adds a PyPI round trip
+   and tens of seconds per analysis. Build a template once per E2B account and
+   set `E2B_SANDBOX_TEMPLATE=finance-analysis:v1` (or the name you built):
+
+   ```bash
+   pnpm sandbox:build
+   ```
+
+   Pin package versions before an evaluation freeze with
+   `SANDBOX_PYTHON_PACKAGES="yfinance==<ver>,tabulate==<ver>"` and bump the
+   template tag. When the template is set, the per-run install step is skipped
+   and PyPI is removed from the sandbox network allowlist. Leave the variable
+   empty to fall back to the stock image.
+
 The current identity boundary is a server-issued anonymous session for this controlled prototype. A production deployment must replace that bootstrap boundary with an authenticated identity provider while retaining the server-side ownership checks.
 
-3. **Start the dev server**
+4. **Start the dev server**
 
    ```bash
    pnpm dev
    ```
 
-4. **Open the app**
+5. **Open the app**
 
    Visit [http://localhost:3000](http://localhost:3000) and start chatting. Try a prompt like:
 

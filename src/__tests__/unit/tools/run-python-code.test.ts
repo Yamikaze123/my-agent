@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockRunCode = vi.fn();
 const mockKill = vi.fn().mockResolvedValue(undefined);
@@ -56,6 +56,11 @@ function setupSandbox(execution: ReturnType<typeof makeExecution>) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.stubEnv("E2B_SANDBOX_TEMPLATE", "");
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
 });
 
 describe("runPythonCodeTool", () => {
@@ -146,7 +151,7 @@ describe("runPythonCodeTool", () => {
       expect(modelOutput.value.stderr).toContain("[truncated");
     });
 
-    it("always installs analysis dependencies before running user code", async () => {
+    it("installs analysis dependencies on the stock image before running user code", async () => {
       setupSandbox(makeExecution({}));
 
       await execute("import yfinance");
@@ -175,6 +180,34 @@ describe("runPythonCodeTool", () => {
           }),
         }),
       );
+    });
+
+    it("skips the install step and PyPI hosts when a prebuilt template is configured", async () => {
+      vi.stubEnv("E2B_SANDBOX_TEMPLATE", "finance-analysis:v1");
+      mockRunCode.mockResolvedValueOnce(makeExecution({ stdout: ["ok"] }));
+      mockCreate.mockResolvedValue({ runCode: mockRunCode, kill: mockKill });
+
+      const result = await execute("import yfinance; print('ok')");
+
+      expect(result.success).toBe(true);
+      expect(result.stdout).toBe("ok");
+      // Only the user's code runs; no dependency install round trip.
+      expect(mockRunCode).toHaveBeenCalledOnce();
+      expect(mockRunCode.mock.calls[0][0]).toContain("print('ok')");
+      expect(mockCreate).toHaveBeenCalledWith(
+        "finance-analysis:v1",
+        expect.objectContaining({
+          network: expect.objectContaining({
+            allowPublicTraffic: false,
+            denyOut: ["0.0.0.0/0"],
+          }),
+        }),
+      );
+      const allowOut = mockCreate.mock.calls[0][1].network.allowOut as string[];
+      expect(allowOut).toContain("query1.finance.yahoo.com");
+      expect(allowOut).not.toContain("pypi.org");
+      expect(allowOut).not.toContain("files.pythonhosted.org");
+      expect(mockKill).toHaveBeenCalledOnce();
     });
 
     it("returns an installation error without running user code", async () => {

@@ -1,0 +1,12 @@
+{
+  "$comment": "Sandbox egress allowlist entries. E2B enforces hostname entries at the TLS layer when denyOut contains 0.0.0.0/0; verified live on 2026-10-04 (see doc/TEST_PLAN.md).",
+  "packageBootstrap": ["pypi.org", "pypi.python.org", "files.pythonhosted.org"],
+  "marketData": [
+    "query1.finance.yahoo.com",
+    "query2.finance.yahoo.com",
+    "finance.yahoo.com",
+    "fc.yahoo.com",
+    "guce.yahoo.com",
+    "consent.yahoo.com"
+  ]
+}

@@ -10,7 +10,8 @@
     "studio": "mastra dev",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "sandbox:build": "node sandbox/build-analysis-template.mjs"
   },
   "dependencies": {
     "@ai-sdk/azure": "^3.0.54",

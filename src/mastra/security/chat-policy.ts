@@ -215,6 +215,15 @@ function truncateModelHistory(value: string): string {
   return `${value.slice(0, MAX_MODEL_HISTORY_OUTPUT_LENGTH)}\n[truncated before being sent to the model]`;
 }
 
+/**
+ * Replace image payloads with a count and bound stdout/stderr text anywhere in
+ * a structured value. Shared by model-history compaction and trace export so
+ * base64 image bytes never reach the model context or persisted spans.
+ */
+export function compactLargeToolPayload(value: unknown): unknown {
+  return compactModelHistory(value);
+}
+
 function compactModelHistory(value: unknown): unknown {
   if (value instanceof Date) return value;
   if (Array.isArray(value)) return value.map(compactModelHistory);

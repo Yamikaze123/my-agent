@@ -9,20 +9,41 @@ export const CODE_EXECUTION_LIMITS = {
   requestTimeoutMs: 30_000,
 } as const;
 
-export const APPROVED_OUTBOUND_HOSTS = [
-  // Package bootstrap hosts. The install command is server-controlled and
-  // limited to the small analysis dependency allowlist.
-  "pypi.org",
-  "pypi.python.org",
-  "files.pythonhosted.org",
-  // Live finance connector hosts.
-  "query1.finance.yahoo.com",
-  "query2.finance.yahoo.com",
-  "finance.yahoo.com",
-  "fc.yahoo.com",
-  "guce.yahoo.com",
-  "consent.yahoo.com",
-] as const;
+import outboundHosts from "./outbound-hosts.json";
+
+// Sandbox egress entries live in outbound-hosts.json so they can be read by
+// tooling outside the TypeScript build as well as by this policy.
+
+// Package bootstrap hosts. Needed only when the sandbox runs on the stock
+// E2B image and the server-controlled install step has to fetch the analysis
+// packages. A prebuilt template (see sandbox/build-analysis-template.mjs and
+// E2B_SANDBOX_TEMPLATE) removes both the install step and these hosts.
+export const PACKAGE_BOOTSTRAP_HOSTS: readonly string[] = Object.freeze([
+  ...outboundHosts.packageBootstrap,
+]);
+
+// Live finance connector hosts used by the yfinance regression path.
+export const MARKET_DATA_OUTBOUND_HOSTS: readonly string[] = Object.freeze([
+  ...outboundHosts.marketData,
+]);
+
+/** The complete allowlist used by the stock-image execution path. */
+export const APPROVED_OUTBOUND_HOSTS: readonly string[] = Object.freeze([
+  ...PACKAGE_BOOTSTRAP_HOSTS,
+  ...MARKET_DATA_OUTBOUND_HOSTS,
+]);
+
+/**
+ * Outbound hosts for one sandbox execution. With a prebuilt template the
+ * packages are already present, so PyPI is not reachable from user code.
+ */
+export function approvedOutboundHosts(options: {
+  prebuiltTemplate: boolean;
+}): readonly string[] {
+  return options.prebuiltTemplate
+    ? [...MARKET_DATA_OUTBOUND_HOSTS]
+    : [...APPROVED_OUTBOUND_HOSTS];
+}
 
 export class CodePolicyError extends Error {
   constructor(message: string) {

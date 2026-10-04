@@ -6,6 +6,7 @@ import {
   SensitiveDataFilter,
 } from "@mastra/observability";
 import { dataAnalysisAgent } from "./agents/data-analysis-agent";
+import { ToolPayloadCompactor } from "./observability/tool-payload-compactor";
 import { dataAnalysisTools } from "./tools/chat-tools";
 import { financeAnalysisWorkflow } from "./workflows/finance-analysis";
 import { storage } from "./storage";
@@ -27,6 +28,9 @@ export const mastra = new Mastra({
           new DefaultExporter(), // Persists traces to storage for Mastra Studio
         ],
         spanOutputProcessors: [
+          // Drop base64 image bytes and cap long text before spans are
+          // persisted; tool outputs can otherwise carry megabytes per call.
+          new ToolPayloadCompactor(),
           new SensitiveDataFilter(), // Redacts sensitive data like passwords, tokens, keys
         ],
       },
