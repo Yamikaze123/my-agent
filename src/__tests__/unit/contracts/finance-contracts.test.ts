@@ -339,6 +339,68 @@ describe("shared finance contracts", () => {
     ).toBe(false);
   });
 
+  it("lets only failed runs omit the dataset reference and provenance", () => {
+    const failedWithoutDataset = {
+      runId,
+      resourceId,
+      status: "failed",
+      idempotencyKey: "resource/failed/run",
+      metrics: [],
+      stdoutPreview: "",
+      stderrPreview: "",
+      artifacts: [],
+      createdAt: observedAt,
+      retryCount: 0,
+      error: {
+        category: "authorization",
+        message: "The requested dataset is not available to this session.",
+      },
+    };
+    expect(analysisRunResultSchema.parse(failedWithoutDataset)).toMatchObject({
+      status: "failed",
+      error: { category: "authorization" },
+    });
+
+    expect(
+      analysisRunResultSchema.safeParse({
+        ...failedWithoutDataset,
+        status: "completed",
+        error: undefined,
+      }).success,
+    ).toBe(false);
+
+    // A failed run may carry dataset and provenance together, but not one
+    // without the other.
+    expect(
+      analysisRunResultSchema.safeParse({ ...failedWithoutDataset, dataset })
+        .success,
+    ).toBe(false);
+    expect(
+      analysisRunResultSchema.safeParse({ ...failedWithoutDataset, provenance })
+        .success,
+    ).toBe(false);
+    expect(
+      analysisRunResultSchema.safeParse({
+        ...failedWithoutDataset,
+        dataset,
+        provenance,
+      }).success,
+    ).toBe(true);
+
+    expect(
+      analysisRunResultSchema.safeParse({
+        ...failedWithoutDataset,
+        status: "completed",
+        error: undefined,
+        dataset,
+        provenance: {
+          ...provenance,
+          dataset: { ...dataset, datasetId: "other-dataset" },
+        },
+      }).success,
+    ).toBe(false);
+  });
+
   it("keeps the fixture manifest contract compatible with the new schemas", () => {
     expect(financeFixtureManifestSchema.parse(financeFixtureManifest)).toEqual(
       financeFixtureManifest,

@@ -74,6 +74,37 @@ describe("finance metric pack", () => {
     expect(rows).toEqual(originalRows);
   });
 
+  it("normalizes timezone-bearing ISO dates before calculating metrics", () => {
+    const rows = rowsForTicker("MSFT").map((row) => ({
+      ...row,
+      date: `${row.date}T00:00:00-05:00`,
+    }));
+
+    expect(calculateTotalReturn(rows)).toBeCloseTo(9, 10);
+    expect(calculateAnnualizedVolatility(rows)).toBeCloseTo(
+      2.628906584781655,
+      10,
+    );
+    expect(calculateMaximumDrawdown(rows)).toBeCloseTo(-0.4901960784313708, 10);
+
+    // The UTC calendar date, rather than the local date prefix, determines
+    // ordering when offsets place the observations on different UTC dates.
+    expect(
+      calculateTotalReturn([
+        {
+          ticker: "MSFT",
+          date: "2025-01-01T23:00:00-05:00",
+          close: 100,
+        },
+        {
+          ticker: "MSFT",
+          date: "2025-01-02T00:30:00+01:00",
+          close: 110,
+        },
+      ]),
+    ).toBeCloseTo((100 / 110 - 1) * 100, 10);
+  });
+
   it("rejects ambiguous or insufficient observations", () => {
     const aaplRows = rowsForTicker("AAPL");
     expect(() => calculateTotalReturn(aaplRows.slice(0, 1))).toThrow(

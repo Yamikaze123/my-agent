@@ -8,6 +8,7 @@ An AI-powered data analysis assistant built with [Next.js](https://nextjs.org), 
 - **Cloud-sandboxed Python execution** — the agent writes and runs Python 3 in [E2B](https://e2b.dev) cloud sandboxes with pandas, numpy, matplotlib, seaborn, scipy, scikit-learn, and yfinance pre-installed. No local Python required.
 - **Auto-generated plots** — matplotlib/seaborn charts are captured and displayed inline.
 - **Server-scoped chat memory** — each browser receives a signed server-issued session and resource, with thread cookies cryptographically bound to that scope before Mastra memory is accessed.
+- **Governed finance profile/quality path** — owner-scoped fixture/CSV datasets can be profiled and checked by a registered deterministic Mastra workflow before metric execution.
 - **Vercel-ready** — deploys to Vercel with no extra infrastructure beyond E2B and a PostgreSQL database.
 
 ## Prerequisites
@@ -68,8 +69,12 @@ src/
 │   ├── page.tsx              # Chat UI
 │   └── api/chat/route.ts     # Chat API route (streams agent responses, signed session/thread isolation)
 ├── mastra/
-│   ├── index.ts              # Mastra configuration (agents, storage, logging)
+│   ├── index.ts              # Mastra configuration (agents, workflow, storage, logging)
 │   ├── security/             # Server-issued sessions and permission context
+│   ├── datasets/              # Owner-scoped process-local catalog
+│   ├── profiling/             # Deterministic profile statistics
+│   ├── quality/               # Finance quality rules and findings
+│   ├── workflows/             # Registered profile/quality workflow
 │   ├── agents/
 │   │   └── data-analysis-agent.ts  # Agent definition & system prompt
 │   └── tools/

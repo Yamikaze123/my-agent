@@ -1,6 +1,7 @@
 import {
   financePriceRowSchema,
   metricDefinitionSchema,
+  normalizeFinanceDate,
   type FinancePriceRow,
   type MetricDefinition,
 } from "../contracts/finance";
@@ -147,7 +148,15 @@ function normalizeSeries(rows: readonly FinancePriceRow[]): FinancePriceRow[] {
     );
   }
 
-  const parsedRows = rows.map((row) => financePriceRowSchema.parse(row));
+  const parsedRows = rows.map((row) =>
+    financePriceRowSchema.parse({
+      ...row,
+      // Catalog/CSV rows may retain a timezone-bearing ISO timestamp until
+      // the metric step runs. Canonicalize it before strict row validation so
+      // metrics use the same UTC calendar date as profiling and quality.
+      date: normalizeFinanceDate(row.date),
+    }),
+  );
   const tickers = new Set(parsedRows.map((row) => row.ticker));
   if (tickers.size !== 1) {
     throw new MetricCalculationError(

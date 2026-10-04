@@ -9,6 +9,7 @@ import {
   getDataset,
   getDatasetContent,
   listDatasets,
+  readOwnedDataset,
   MAX_TOTAL_RETAINED_UPLOAD_BYTES,
   MAX_UPLOAD_BYTES_PER_RESOURCE,
   registerFinanceCsv,
@@ -238,5 +239,47 @@ describe("owner-scoped finance dataset catalog", () => {
       registerFinanceCsv(context, csv("date,close\n2025-01-31\n")),
     ).toThrow(FinanceCsvError);
     expect(listDatasets(context)).toEqual([]);
+  });
+});
+
+describe("readOwnedDataset", () => {
+  it("returns runtime-frozen columns and rows that callers cannot mutate", () => {
+    const context = permissionContext();
+    const entry = registerFinanceCsv(
+      context,
+      csv("ticker,date,close\nAAPL,2025-01-31,100\n"),
+    );
+
+    const view = readOwnedDataset(entry.dataset.datasetId, context);
+    const rows = view.rows as unknown as unknown[][];
+    const columns = view.columns as unknown as string[];
+
+    expect(Object.isFrozen(view.rows)).toBe(true);
+    expect(Object.isFrozen(view.rows[0])).toBe(true);
+    expect(Object.isFrozen(view.columns)).toBe(true);
+    expect(() => rows.push(["TSLA", "2025-02-28", 1])).toThrow(TypeError);
+    expect(() => {
+      rows[0][2] = 0;
+    }).toThrow(TypeError);
+    expect(() => columns.push("extra")).toThrow(TypeError);
+
+    // The catalog copy handed to external callers is unaffected and still
+    // reflects the original content.
+    expect(getDatasetContent(entry.dataset.datasetId, context).rows).toEqual([
+      ["AAPL", "2025-01-31", 100],
+    ]);
+  });
+
+  it("denies the borrowed view to another resource", () => {
+    const owner = permissionContext();
+    const other = permissionContext();
+    const entry = registerFinanceCsv(
+      owner,
+      csv("ticker,date,close\nAAPL,2025-01-31,100\n"),
+    );
+
+    expect(() => readOwnedDataset(entry.dataset.datasetId, other)).toThrow(
+      AuthorizationError,
+    );
   });
 });

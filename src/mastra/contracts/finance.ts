@@ -19,7 +19,7 @@ const identifierSchema = z
 const fieldNameSchema = z
   .string()
   .regex(fieldNamePattern, "Field name contains unsupported characters.");
-const currencyCodeSchema = z
+export const currencyCodeSchema = z
   .string()
   .regex(/^[A-Z]{3}$/, "Currency must be a three-letter uppercase code.");
 
@@ -669,7 +669,9 @@ export const analysisRunResultSchema = z
     // The deterministic in-process core workflow has no separate tenant or
     // sandbox/provider lifecycle. Durable runs may populate these fields.
     tenantId: resourceIdSchema.optional(),
-    dataset: datasetRefSchema,
+    // A run that fails before its dataset is authorized carries no dataset or
+    // provenance; the refinement below requires both for every other status.
+    dataset: datasetRefSchema.optional(),
     status: runStatusSchema,
     idempotencyKey: z.string().min(1).max(256),
     metrics: z.array(metricResultSchema).max(128),
@@ -677,7 +679,7 @@ export const analysisRunResultSchema = z
     stdoutPreview: z.string().max(4_000),
     stderrPreview: z.string().max(4_000),
     artifacts: z.array(artifactRefSchema).max(128),
-    provenance: provenanceSchema,
+    provenance: provenanceSchema.optional(),
     createdAt: isoTimestampSchema,
     startedAt: isoTimestampSchema.optional(),
     completedAt: isoTimestampSchema.optional(),
@@ -689,7 +691,7 @@ export const analysisRunResultSchema = z
   })
   .strict()
   .superRefine((result, ctx) => {
-    if (result.provenance.runId !== result.runId) {
+    if (result.provenance && result.provenance.runId !== result.runId) {
       ctx.addIssue({
         code: "custom",
         path: ["provenance", "runId"],
@@ -703,6 +705,43 @@ export const analysisRunResultSchema = z
         path: ["error"],
         message: "Failed runs require a classified error.",
       });
+    }
+
+    if (result.status !== "failed") {
+      if (!result.dataset) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["dataset"],
+          message: "Only failed runs may omit the dataset reference.",
+        });
+      }
+      if (!result.provenance) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["provenance"],
+          message: "Only failed runs may omit provenance.",
+        });
+      }
+    } else if (
+      (result.dataset === undefined) !==
+      (result.provenance === undefined)
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: [result.dataset === undefined ? "dataset" : "provenance"],
+        message:
+          "A failed run must carry both the dataset reference and provenance, or neither.",
+      });
+    }
+
+    if (result.dataset && result.provenance) {
+      if (result.provenance.dataset.datasetId !== result.dataset.datasetId) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["provenance", "dataset"],
+          message: "Provenance must describe the run's dataset.",
+        });
+      }
     }
   });
 
@@ -815,3 +854,18 @@ export type ArtifactRef = z.infer<typeof artifactRefSchema>;
 export type LineageRecord = z.infer<typeof lineageRecordSchema>;
 export type AnalysisRunResult = z.infer<typeof analysisRunResultSchema>;
 export type MeasurementRecord = z.infer<typeof measurementRecordSchema>;
+
+/**
+ * The one date normalizer shared by profiling, quality rules, and later
+ * metric steps. It accepts a `YYYY-MM-DD` calendar date, or an ISO-8601
+ * timestamp that carries its own timezone, which is reduced to its UTC
+ * calendar date. Anything else, including locale-style text such as
+ * `01/31/2025` or a timestamp without a zone, returns undefined so every
+ * consumer agrees on what counts as a valid finance date.
+ */
+export function normalizeFinanceDate(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  if (financeDateSchema.safeParse(value).success) return value;
+  if (!isoTimestampSchema.safeParse(value).success) return undefined;
+  return new Date(Date.parse(value)).toISOString().slice(0, 10);
+}

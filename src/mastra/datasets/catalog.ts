@@ -30,13 +30,24 @@ export const MAX_CATALOG_DATASETS = 1_000;
 export const MAX_CONCURRENT_CSV_UPLOADS = 4;
 export const MAX_CONCURRENT_CSV_UPLOADS_PER_RESOURCE = 1;
 
+// Stored columns and rows are frozen at registration (see freezeTable) so
+// every internal reader, including workflow steps that borrow the arrays
+// without copying, sees runtime-immutable data.
 type StoredDataset = {
   ownerResourceId: string;
   entry: DatasetCatalogEntry;
-  columns: string[];
-  rows: CsvScalar[][];
+  columns: readonly string[];
+  rows: readonly (readonly CsvScalar[])[];
   retainedBytes: number;
 };
+
+function freezeTable(
+  columns: string[],
+  rows: CsvScalar[][],
+): Pick<StoredDataset, "columns" | "rows"> {
+  for (const row of rows) Object.freeze(row);
+  return { columns: Object.freeze(columns), rows: Object.freeze(rows) };
+}
 
 type DatasetCatalogState = {
   datasets: Map<string, StoredDataset>;
@@ -82,20 +93,15 @@ function authorize(
   requirePermission(createMastraRequestContext(permissionContext), action);
 }
 
-function clearStoredDataset(dataset: StoredDataset): void {
-  dataset.rows.length = 0;
-  dataset.columns.length = 0;
-  dataset.entry.schema.length = 0;
-}
-
 function removeDataset(
   state: DatasetCatalogState,
   datasetId: string,
   dataset: StoredDataset,
 ): void {
+  // The frozen table cannot be truncated in place; dropping the catalog's
+  // reference releases it once no borrowed view remains in use.
   state.datasets.delete(datasetId);
   state.retainedUploadBytes -= dataset.retainedBytes;
-  clearStoredDataset(dataset);
 }
 
 function pruneExpired(state = getState(), now = Date.now()): void {
@@ -261,8 +267,7 @@ export function registerFinanceFixture(
   state.datasets.set(datasetId, {
     ownerResourceId: permissionContext.resource.id,
     entry,
-    columns: [...fixtureColumns],
-    rows,
+    ...freezeTable([...fixtureColumns], rows),
     retainedBytes: 0,
   });
   return copyEntry(entry);
@@ -355,8 +360,7 @@ export function registerFinanceCsv(
   state.datasets.set(datasetId, {
     ownerResourceId: permissionContext.resource.id,
     entry,
-    columns: parsed.columns,
-    rows: parsed.rows,
+    ...freezeTable(parsed.columns, parsed.rows),
     retainedBytes: bytes.byteLength,
   });
   state.retainedUploadBytes += bytes.byteLength;
@@ -412,6 +416,35 @@ export function getDatasetContent(
     dataset: copyEntry(stored.entry).dataset,
     columns: [...stored.columns],
     rows: stored.rows.map((row) => [...row]),
+  };
+}
+
+export type OwnedDatasetView = {
+  entry: DatasetCatalogEntry;
+  columns: readonly string[];
+  rows: readonly (readonly CsvScalar[])[];
+};
+
+/**
+ * One authorized lookup that returns the catalog entry together with the
+ * stored columns and rows. Unlike getDatasetContent it does not copy the
+ * rows, so server-side workflow steps can read a dataset of up to the catalog
+ * limits without duplicating it per step. The arrays are frozen at
+ * registration, so the view is immutable at runtime, not only in the type
+ * system; the entry is a validated copy.
+ */
+export function readOwnedDataset(
+  datasetId: string,
+  permissionContext: PermissionContext,
+): OwnedDatasetView {
+  authorize(permissionContext, "dataset:read");
+  const state = getState();
+  pruneExpired(state);
+  const stored = getOwnedDataset(state, datasetId, permissionContext);
+  return {
+    entry: copyEntry(stored.entry),
+    columns: stored.columns,
+    rows: stored.rows,
   };
 }
 

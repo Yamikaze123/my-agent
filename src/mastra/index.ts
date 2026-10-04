@@ -7,10 +7,12 @@ import {
 } from "@mastra/observability";
 import { dataAnalysisAgent } from "./agents/data-analysis-agent";
 import { dataAnalysisTools } from "./tools/chat-tools";
+import { financeAnalysisWorkflow } from "./workflows/finance-analysis";
 import { storage } from "./storage";
 
 export const mastra = new Mastra({
   agents: { dataAnalysisAgent },
+  workflows: { financeAnalysisWorkflow },
   tools: dataAnalysisTools,
   storage,
   logger: new PinoLogger({
