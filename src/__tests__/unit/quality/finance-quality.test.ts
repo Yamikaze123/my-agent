@@ -60,6 +60,11 @@ describe("finance quality assessment", () => {
       "ticker,date,close,currency\nAAPL,2025-01-31,100,USD\nSAP,2025-01-31,110,EUR\nAAPL,2025-02-28,103,USD\n",
       "mixed-currency",
     ],
+    [
+      "invalid ticker",
+      "ticker,date,close\naapl,2025-01-31,100\nAAPL,2025-02-28,103\n",
+      "invalid-ticker",
+    ],
   ])("blocks %s", (_name, text, expectedRule) => {
     const report = assess(text);
 

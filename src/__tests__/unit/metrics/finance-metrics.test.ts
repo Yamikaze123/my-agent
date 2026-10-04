@@ -4,6 +4,7 @@ import {
   calculateFinanceMetric,
   calculateMaximumDrawdown,
   calculateTotalReturn,
+  financeDrawdownFixture,
   financeGoldenFixture,
   financeMetricDefinitions,
   getFinanceMetricDefinition,
@@ -12,10 +13,13 @@ import {
 import {
   financeFixture,
   financeFixtureManifest,
+  financeFixtureV2,
+  financeFixtureV2Manifest,
 } from "@/mastra/connectors/finance-fixture";
 
-function rowsForTicker(ticker: string) {
-  return financeFixture.rows.filter((row) => row.ticker === ticker);
+function rowsForTicker(ticker: string, version = "v1") {
+  const fixture = version === "v2" ? financeFixtureV2 : financeFixture;
+  return fixture.rows.filter((row) => row.ticker === ticker);
 }
 
 describe("finance metric pack", () => {
@@ -35,7 +39,7 @@ describe("finance metric pack", () => {
       expect(definition.dimensions).toEqual(["ticker"]);
       expect(definition.unit).toBe("percent");
       expect(definition.currency).toBe("USD");
-      expect(definition.expectedFixtureResults).toHaveLength(3);
+      expect(definition.expectedFixtureResults).toHaveLength(6);
     }
   });
 
@@ -46,11 +50,19 @@ describe("finance metric pack", () => {
         expect(typeof ticker).toBe("string");
         const actual = calculateFinanceMetric(
           definition.metricId as FinanceMetricId,
-          rowsForTicker(ticker as string),
+          rowsForTicker(ticker as string, expected.fixtureVersion),
         );
         expect(actual).toBeCloseTo(expected.expectedValue, 9);
       }
     }
+  });
+
+  it("freezes the irregular drawdown fixture expectations", () => {
+    expect(financeDrawdownFixture).toEqual({
+      fixtureId: financeFixtureV2.fixtureId,
+      fixtureVersion: financeFixtureV2.version,
+      contentHash: financeFixtureV2Manifest.contentHash,
+    });
   });
 
   it("implements the documented formulas directly", () => {

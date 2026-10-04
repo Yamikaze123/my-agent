@@ -1,6 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
 import rawFixture from "../../../evaluation/fixtures/finance/finance-regression-v1.json";
 import rawManifest from "../../../evaluation/fixtures/finance/manifest.json";
+import rawFixtureV2 from "../../../evaluation/fixtures/finance/finance-regression-v2.json";
+import rawManifestV2 from "../../../evaluation/fixtures/finance/finance-regression-v2-manifest.json";
 import {
   financeFixtureManifestSchema,
   financeFixtureRequestSchema,
@@ -14,6 +16,9 @@ import {
 export const financeFixture = financeFixtureSchema.parse(rawFixture);
 export const financeFixtureManifest =
   financeFixtureManifestSchema.parse(rawManifest);
+export const financeFixtureV2 = financeFixtureSchema.parse(rawFixtureV2);
+export const financeFixtureV2Manifest =
+  financeFixtureManifestSchema.parse(rawManifestV2);
 
 export function canonicalizeFinanceRows(
   rows: readonly FinancePriceRow[],
@@ -27,21 +32,48 @@ export function hashFinanceRows(rows: readonly FinancePriceRow[]): string {
     .digest("hex")}`;
 }
 
-const computedHash = hashFinanceRows(financeFixture.rows);
+function verifyFixtureManifest(
+  fixture: typeof financeFixture,
+  manifest: typeof financeFixtureManifest,
+): string {
+  const computedHash = hashFinanceRows(fixture.rows);
+  if (computedHash !== manifest.contentHash) {
+    throw new Error(
+      `Finance fixture checksum mismatch: expected ${manifest.contentHash}, computed ${computedHash}.`,
+    );
+  }
 
-if (computedHash !== financeFixtureManifest.contentHash) {
-  throw new Error(
-    `Finance fixture checksum mismatch: expected ${financeFixtureManifest.contentHash}, computed ${computedHash}.`,
-  );
+  if (
+    manifest.fixtureId !== fixture.fixtureId ||
+    manifest.version !== fixture.version ||
+    manifest.rowCount !== fixture.rows.length
+  ) {
+    throw new Error(
+      "Finance fixture manifest does not match the fixture data.",
+    );
+  }
+
+  return computedHash;
 }
 
-if (
-  financeFixtureManifest.fixtureId !== financeFixture.fixtureId ||
-  financeFixtureManifest.version !== financeFixture.version ||
-  financeFixtureManifest.rowCount !== financeFixture.rows.length
-) {
-  throw new Error("Finance fixture manifest does not match the fixture data.");
-}
+const computedHash = verifyFixtureManifest(
+  financeFixture,
+  financeFixtureManifest,
+);
+verifyFixtureManifest(financeFixtureV2, financeFixtureV2Manifest);
+
+export const financeFixtureRegistrations = Object.freeze([
+  {
+    fixture: financeFixture,
+    manifest: financeFixtureManifest,
+    locator: "evaluation/fixtures/finance/finance-regression-v1.json",
+  },
+  {
+    fixture: financeFixtureV2,
+    manifest: financeFixtureV2Manifest,
+    locator: "evaluation/fixtures/finance/finance-regression-v2.json",
+  },
+] as const);
 
 const availableTickers = new Set(financeFixture.rows.map((row) => row.ticker));
 

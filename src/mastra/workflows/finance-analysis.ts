@@ -5,11 +5,19 @@ import {
   analysisRunResultSchema,
   dataProfileSchema,
   datasetRefSchema,
+  financeAnalysisInputSchema,
+  financeMetricRequestSchema,
   isoTimestampSchema,
   runErrorSchema,
+  type FinanceAnalysisInput,
   type AnalysisRunResult,
 } from "../contracts/finance";
 import { readOwnedDataset } from "../datasets/catalog";
+import {
+  calculateCatalogFinanceMetrics,
+  FinanceMetricExecutionError,
+} from "../metrics/finance-metric-execution";
+import { FinanceMetricDataAvailabilityError } from "../metrics/finance-metrics";
 import { profileFinanceDataset } from "../profiling/finance-profile";
 import { assessFinanceQuality } from "../quality/finance-quality";
 import { redactSensitiveText } from "../security/chat-policy";
@@ -22,12 +30,8 @@ import {
 } from "../security/permission-context";
 
 type RunError = z.infer<typeof runErrorSchema>;
-
-const financeAnalysisInputSchema = z
-  .object({
-    datasetId: z.uuid(),
-  })
-  .strict();
+export { financeAnalysisInputSchema } from "../contracts/finance";
+export type { FinanceAnalysisInput } from "../contracts/finance";
 
 const profileStageSchema = z
   .object({
@@ -67,10 +71,15 @@ const VALIDATION_ERROR_NAMES: ReadonlySet<string> = new Set([
   "FinanceAnalysisInputError",
   "FinanceProfileError",
   "FinanceQualityError",
+  "FinanceMetricExecutionError",
+  "MetricCalculationError",
   "DatasetCatalogError",
   "FinanceCsvError",
   "ZodError",
   "$ZodError",
+]);
+const DATA_AVAILABILITY_ERROR_NAMES: ReadonlySet<string> = new Set([
+  "FinanceMetricDataAvailabilityError",
 ]);
 
 function runIdempotencyKey(
@@ -78,8 +87,19 @@ function runIdempotencyKey(
   datasetId: string,
   version: string,
   hash: string,
+  request: FinanceAnalysisInput,
 ): string {
-  return `profile-quality:${resourceId}:${datasetId}:${version}:${hash}`;
+  return [
+    "finance-analysis",
+    resourceId,
+    datasetId,
+    version,
+    hash,
+    request.metricId ?? "profile-quality",
+    request.ticker ?? "all-tickers",
+    request.startDate ?? "dataset-start",
+    request.endDate ?? "dataset-end",
+  ].join(":");
 }
 
 function boundedErrorMessage(message: string): string {
@@ -121,6 +141,13 @@ export function classifyRunError(error: unknown): RunError {
   if (VALIDATION_ERROR_NAMES.has(name)) {
     return runErrorSchema.parse({
       category: "validation",
+      message: boundedErrorMessage(message),
+    });
+  }
+
+  if (DATA_AVAILABILITY_ERROR_NAMES.has(name)) {
+    return runErrorSchema.parse({
+      category: "data-availability",
       message: boundedErrorMessage(message),
     });
   }
@@ -182,8 +209,15 @@ const qualityGateStep = createStep({
     "Evaluate finance quality rules and return a scoped run envelope.",
   inputSchema: profileStageSchema,
   outputSchema: analysisRunResultSchema,
-  execute: async ({ inputData, requestContext, runId, resourceId }) => {
+  execute: async ({
+    inputData,
+    requestContext,
+    runId,
+    resourceId,
+    getInitData,
+  }) => {
     const permissionContext = authorizeStep(requestContext, resourceId);
+    const request = getInitData<FinanceAnalysisInput>();
     // The dataset is re-read rather than carried in step output so that no
     // raw rows pass through the workflow result or any future snapshot.
     const { entry, columns, rows } = readOwnedDataset(
@@ -216,6 +250,7 @@ const qualityGateStep = createStep({
         entry.dataset.datasetId,
         entry.dataset.version,
         entry.dataset.contentHash,
+        request,
       ),
       metrics: [],
       qualityReport,
@@ -239,10 +274,114 @@ const qualityGateStep = createStep({
   },
 });
 
+const metricCalculationStep = createStep({
+  id: "calculate-metric",
+  description:
+    "Calculate the requested deterministic finance metric from the same owned catalog dataset.",
+  inputSchema: analysisRunResultSchema,
+  outputSchema: analysisRunResultSchema,
+  execute: async ({
+    inputData,
+    requestContext,
+    runId,
+    resourceId,
+    getInitData,
+  }) => {
+    const permissionContext = authorizeStep(requestContext, resourceId);
+    const request = getInitData<FinanceAnalysisInput>();
+
+    // Profile/quality-only callers remain supported. The public analysis tool
+    // uses financeMetricRequestSchema and always supplies a metric ID.
+    if (!request.metricId) return inputData;
+
+    // A blocking quality finding is a completed, typed outcome, not an
+    // exception. The dependent metric step must leave metrics empty.
+    if (inputData.qualityReport?.gateOutcome === "blocked") {
+      return inputData;
+    }
+
+    const metricRequest = financeMetricRequestSchema.safeParse(request);
+    if (!metricRequest.success) {
+      throw new FinanceAnalysisInputError(
+        "The finance metric request is invalid.",
+      );
+    }
+
+    if (!inputData.qualityReport || !inputData.provenance) {
+      throw new FinanceMetricExecutionError(
+        "The quality gate did not produce the required metric context.",
+      );
+    }
+
+    // Re-read through the catalog's owner check using the dataset reference
+    // already carried by the quality-gate envelope. This binds metric input
+    // and provenance to the same server-resolved dataset by construction.
+    if (!inputData.dataset) {
+      throw new FinanceMetricExecutionError(
+        "The quality gate did not produce the required dataset context.",
+      );
+    }
+    const { entry, columns, rows } = readOwnedDataset(
+      inputData.dataset.datasetId,
+      permissionContext,
+    );
+    const startedAt = inputData.startedAt ?? inputData.createdAt;
+    const completedAt = new Date().toISOString();
+    const durationMs = Math.max(
+      0,
+      Math.min(1_000_000, Date.parse(completedAt) - Date.parse(startedAt)),
+    );
+
+    let metrics: AnalysisRunResult["metrics"];
+    try {
+      metrics = calculateCatalogFinanceMetrics({
+        request: metricRequest.data,
+        entry,
+        columns,
+        rows,
+        qualityReport: inputData.qualityReport,
+        calculatedAt: completedAt,
+      });
+    } catch (error) {
+      if (!(error instanceof FinanceMetricDataAvailabilityError)) throw error;
+
+      // A range with no/insufficient observations is an ordinary typed
+      // outcome. Preserve the successful profile/quality context so the
+      // caller can explain why the requested calculation was unavailable.
+      return analysisRunResultSchema.parse({
+        ...inputData,
+        runId,
+        resourceId: permissionContext.resource.id,
+        status: "failed",
+        metrics: [],
+        completedAt,
+        durationMs,
+        error: classifyRunError(error),
+      });
+    }
+
+    return analysisRunResultSchema.parse({
+      ...inputData,
+      runId,
+      resourceId: permissionContext.resource.id,
+      dataset: entry.dataset,
+      metrics,
+      completedAt,
+      durationMs,
+      provenance: {
+        ...inputData.provenance,
+        observedAt: completedAt,
+        dataset: entry.dataset,
+        source: entry.source,
+      },
+    });
+  },
+});
+
 /**
- * The first part of the governed finance workflow. Phase 8 appends the
- * deterministic metric step to this same workflow; this phase stops after the
- * typed quality gate so blocked data cannot reach metric execution.
+ * The governed finance workflow. A blocking quality finding is preserved as a
+ * completed result with no metrics; otherwise the final step calculates the
+ * requested deterministic metric from the owner-authorized catalog view.
  */
 export const financeAnalysisWorkflow = createWorkflow({
   id: "finance-analysis-workflow",
@@ -260,6 +399,7 @@ export const financeAnalysisWorkflow = createWorkflow({
 })
   .then(profileDatasetStep)
   .then(qualityGateStep)
+  .then(metricCalculationStep)
   .commit();
 
 function failedRunResult(args: {
@@ -277,7 +417,7 @@ function failedRunResult(args: {
     runId: args.runId,
     resourceId: args.resourceId,
     status: "failed",
-    idempotencyKey: `profile-quality:${args.resourceId}:failed:${args.runId}`,
+    idempotencyKey: `finance-analysis:${args.resourceId}:failed:${args.runId}`,
     metrics: [],
     stdoutPreview: "",
     stderrPreview: "",
@@ -306,7 +446,7 @@ function failedRunResult(args: {
  */
 export async function runFinanceAnalysisWorkflow(
   permissionContext: PermissionContext,
-  datasetId: string,
+  requestOrDatasetId: FinanceAnalysisInput | string,
 ): Promise<AnalysisRunResult> {
   const createdAt = new Date().toISOString();
   const resourceId = permissionContext.resource.id;
@@ -316,10 +456,14 @@ export async function runFinanceAnalysisWorkflow(
 
   let failure: unknown;
   try {
-    const input = financeAnalysisInputSchema.safeParse({ datasetId });
+    const input = financeAnalysisInputSchema.safeParse(
+      typeof requestOrDatasetId === "string"
+        ? { datasetId: requestOrDatasetId }
+        : requestOrDatasetId,
+    );
     if (!input.success) {
       throw new FinanceAnalysisInputError(
-        "The dataset identifier is not a valid dataset ID.",
+        "The finance analysis request is invalid.",
       );
     }
 

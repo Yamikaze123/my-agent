@@ -3,6 +3,7 @@ import {
   metricDefinitionSchema,
   normalizeFinanceDate,
   type FinancePriceRow,
+  type FinanceMetricId,
   type MetricDefinition,
 } from "../contracts/finance";
 
@@ -15,10 +16,14 @@ export const financeGoldenFixture = {
     "sha256:0013058c7e0a0dbeadb925db167b3c6c125c360049958c8372c5efc6324b99e5",
 } as const;
 
-export type FinanceMetricId =
-  | "total-return"
-  | "volatility"
-  | "maximum-drawdown";
+export const financeDrawdownFixture = {
+  fixtureId: "finance-regression",
+  fixtureVersion: "v2",
+  contentHash:
+    "sha256:d9f1c1fbe496530c3d24e97906a1648b337fcc164e9bfb23a8058c84ec303c4f",
+} as const;
+
+export type { FinanceMetricId };
 
 const fixtureExpectation = (
   ticker: string,
@@ -28,6 +33,19 @@ const fixtureExpectation = (
   fixtureId: financeGoldenFixture.fixtureId,
   fixtureVersion: financeGoldenFixture.fixtureVersion,
   contentHash: financeGoldenFixture.contentHash,
+  dimensions: { ticker },
+  expectedValue,
+  tolerance,
+});
+
+const fixtureV2Expectation = (
+  ticker: string,
+  expectedValue: number,
+  tolerance = 1e-9,
+) => ({
+  fixtureId: financeDrawdownFixture.fixtureId,
+  fixtureVersion: financeDrawdownFixture.fixtureVersion,
+  contentHash: financeDrawdownFixture.contentHash,
   dimensions: { ticker },
   expectedValue,
   tolerance,
@@ -59,6 +77,9 @@ const metricDefinitions: MetricDefinition[] = [
       fixtureExpectation("AAPL", 14),
       fixtureExpectation("MSFT", 9),
       fixtureExpectation("TSLA", 14),
+      fixtureV2Expectation("AAPL", 18),
+      fixtureV2Expectation("MSFT", 25),
+      fixtureV2Expectation("TSLA", 12),
     ],
   }),
   metricDefinitionSchema.parse({
@@ -86,6 +107,9 @@ const metricDefinitions: MetricDefinition[] = [
       fixtureExpectation("AAPL", 6.474841156627494),
       fixtureExpectation("MSFT", 2.628906584781655),
       fixtureExpectation("TSLA", 12.917032142906423),
+      fixtureV2Expectation("AAPL", 101.59789428900923),
+      fixtureV2Expectation("MSFT", 58.17686104569907),
+      fixtureV2Expectation("TSLA", 147.74894945858566),
     ],
   }),
   metricDefinitionSchema.parse({
@@ -113,6 +137,9 @@ const metricDefinitions: MetricDefinition[] = [
       fixtureExpectation("AAPL", -0.9803921568627416),
       fixtureExpectation("MSFT", -0.4901960784313708),
       fixtureExpectation("TSLA", -5.555555555555558),
+      fixtureV2Expectation("AAPL", -35.71428571428571),
+      fixtureV2Expectation("MSFT", -18.181818181818176),
+      fixtureV2Expectation("TSLA", -50),
     ],
   }),
 ];
@@ -138,6 +165,13 @@ export class MetricCalculationError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "MetricCalculationError";
+  }
+}
+
+export class FinanceMetricDataAvailabilityError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "FinanceMetricDataAvailabilityError";
   }
 }
 

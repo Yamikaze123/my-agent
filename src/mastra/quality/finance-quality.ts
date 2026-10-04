@@ -1,5 +1,6 @@
 import {
   currencyCodeSchema,
+  financeTickerSchema,
   normalizeFinanceDate,
   qualityReportSchema,
   qualityRuleSchema,
@@ -10,6 +11,10 @@ import {
   type QualityRule,
 } from "../contracts/finance";
 import type { CsvScalar } from "../connectors/finance-csv";
+import {
+  findFinanceFieldIndex,
+  getFinanceTableShapeError,
+} from "../finance/field-resolution";
 import { findGuardrailViolation } from "../security/chat-policy";
 
 export const FINANCE_QUALITY_REPORT_VERSION = "v1";
@@ -74,6 +79,16 @@ export const financeQualityRules = Object.freeze([
     scope: "column",
     gateBehavior: "block",
     remediation: "Use YYYY-MM-DD calendar dates in the date column.",
+  }),
+  rule({
+    ruleId: "invalid-ticker",
+    version: "v1",
+    condition: "Values in the finance ticker field are uppercase symbols.",
+    severity: "error",
+    scope: "column",
+    gateBehavior: "block",
+    remediation:
+      "Normalize ticker values to uppercase finance symbols before analysis.",
   }),
   rule({
     ruleId: "duplicate-observation",
@@ -153,6 +168,7 @@ export type FinanceQualityRuleId =
   | "missing-required-values"
   | "missing-optional-values"
   | "invalid-date"
+  | "invalid-ticker"
   | "duplicate-observation"
   | "out-of-order-date"
   | "missing-period"
@@ -188,29 +204,6 @@ export type FinanceQualityInput = {
 };
 
 const requiredFieldNames = ["ticker", "date"] as const;
-
-function normalizedName(name: string): string {
-  return name.toLowerCase().replace(/[.-]/g, "_");
-}
-
-function findFieldIndex(
-  entry: DatasetCatalogEntry,
-  role: "ticker" | "date" | "price" | "currency",
-): number | undefined {
-  const index = entry.schema.findIndex((field) => field.semanticRole === role);
-  if (index >= 0) return index;
-
-  const indexByName = entry.schema.findIndex((field) => {
-    const name = normalizedName(field.name);
-    if (role === "ticker") return name === "ticker" || name === "symbol";
-    if (role === "date")
-      return name === "date" || name === "datetime" || name === "timestamp";
-    if (role === "price")
-      return ["close", "adj_close", "adjusted_close", "price"].includes(name);
-    return name === "currency" || name === "ccy";
-  });
-  return indexByName >= 0 ? indexByName : undefined;
-}
 
 function isRequiredField(
   index: number,
@@ -313,15 +306,9 @@ function qualityStatus(findings: readonly QualityFinding[]): {
 export function assessFinanceQuality(
   input: FinanceQualityInput,
 ): QualityReport {
-  if (input.columns.length !== input.entry.schema.length) {
-    throw new FinanceQualityError(
-      "Dataset columns do not match the registered schema.",
-    );
-  }
-  if (input.rows.some((row) => row.length !== input.columns.length)) {
-    throw new FinanceQualityError(
-      "A dataset row does not match the registered column count.",
-    );
+  const shapeError = getFinanceTableShapeError(input);
+  if (shapeError) {
+    throw new FinanceQualityError(shapeError);
   }
   if (input.profile.dataset.datasetId !== input.entry.dataset.datasetId) {
     throw new FinanceQualityError(
@@ -346,10 +333,10 @@ export function assessFinanceQuality(
     );
   }
 
-  const tickerIndex = findFieldIndex(input.entry, "ticker");
-  const dateIndex = findFieldIndex(input.entry, "date");
-  const priceIndex = findFieldIndex(input.entry, "price");
-  const currencyIndex = findFieldIndex(input.entry, "currency");
+  const tickerIndex = findFinanceFieldIndex(input.entry, "ticker");
+  const dateIndex = findFinanceFieldIndex(input.entry, "date");
+  const priceIndex = findFinanceFieldIndex(input.entry, "price");
+  const currencyIndex = findFinanceFieldIndex(input.entry, "currency");
   const findings: QualityFinding[] = [];
 
   for (const requiredName of requiredFieldNames) {
@@ -422,6 +409,23 @@ export function assessFinanceQuality(
         `${plural(invalidDates, "row")} contain an invalid finance date.`,
         invalidDates,
         input.entry.schema[dateIndex].name,
+      ),
+    );
+  }
+
+  if (tickerIndex !== undefined) {
+    const invalidTickers = input.rows.filter(
+      (row) =>
+        row[tickerIndex] !== null &&
+        !financeTickerSchema.safeParse(row[tickerIndex]).success,
+    ).length;
+    addFinding(
+      findings,
+      finding(
+        "invalid-ticker",
+        `${plural(invalidTickers, "row")} contain an invalid finance ticker.`,
+        invalidTickers,
+        input.entry.schema[tickerIndex].name,
       ),
     );
   }

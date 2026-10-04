@@ -29,6 +29,12 @@ export const financeTickerSchema = z
   .string()
   .regex(/^[A-Z][A-Z0-9.-]{0,9}$/, "Ticker must be an uppercase symbol.");
 
+export const financeMetricIdSchema = z.enum([
+  "total-return",
+  "volatility",
+  "maximum-drawdown",
+]);
+
 export const financeDateSchema = z
   .string()
   .regex(datePattern, "Date must use YYYY-MM-DD format.")
@@ -249,6 +255,53 @@ export const dateRangeSchema = z
     }
   });
 
+const financeAnalysisSelectionFields = {
+  datasetId: z.uuid(),
+  ticker: financeTickerSchema.optional(),
+  startDate: financeDateSchema.optional(),
+  endDate: financeDateSchema.optional(),
+} as const;
+
+function validateFinanceAnalysisDateRange(
+  query: {
+    startDate?: string;
+    endDate?: string;
+  },
+  ctx: {
+    addIssue: (issue: {
+      code: "custom";
+      path?: PropertyKey[];
+      message: string;
+    }) => void;
+  },
+) {
+  if (query.startDate && query.endDate && query.startDate > query.endDate) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["endDate"],
+      message: "endDate must not precede startDate.",
+    });
+  }
+}
+
+// The workflow keeps metricId optional for the existing profile/quality-only
+// in-process callers. The public analysis tool below makes it required.
+export const financeAnalysisInputSchema = z
+  .object({
+    ...financeAnalysisSelectionFields,
+    metricId: financeMetricIdSchema.optional(),
+  })
+  .strict()
+  .superRefine(validateFinanceAnalysisDateRange);
+
+export const financeMetricRequestSchema = z
+  .object({
+    ...financeAnalysisSelectionFields,
+    metricId: financeMetricIdSchema,
+  })
+  .strict()
+  .superRefine(validateFinanceAnalysisDateRange);
+
 export const schemaLogicalTypeSchema = z.enum([
   "string",
   "integer",
@@ -309,6 +362,12 @@ export const datasetCatalogEntrySchema = z
       });
     }
   });
+
+export const financeDatasetListResultSchema = z
+  .object({
+    datasets: z.array(datasetCatalogEntrySchema).max(MAX_BOUNDED_COLLECTION),
+  })
+  .strict();
 
 const numericSummarySchema = z
   .object({
@@ -745,6 +804,53 @@ export const analysisRunResultSchema = z
     }
   });
 
+const compactMetricResultSchema = z
+  .object({
+    metricId: identifierSchema,
+    definitionVersion: versionSchema,
+    value: finiteNumberSchema,
+    unit: z.enum(["percent", "fraction", "currency", "absolute", "ratio"]),
+    currency: currencyCodeSchema.optional(),
+    dimensions: z.record(
+      identifierSchema,
+      z.union([z.string().min(1).max(128), finiteNumberSchema]),
+    ),
+    validationStatus: z.enum(["valid", "warning", "invalid"]),
+    qualityStatus: qualityStatusSchema.optional(),
+  })
+  .strict();
+
+const compactProvenanceSchema = z
+  .object({
+    runId: resourceIdSchema,
+    dataset: datasetRefSchema,
+    source: z
+      .object({
+        type: z.enum(["fixture", "live", "upload"]),
+        connector: z.string().min(1),
+        provider: z.string().min(1),
+        fixtureId: z.string().min(1).optional(),
+        fixtureVersion: z.string().min(1).optional(),
+        contentHash: contentHashSchema.optional(),
+      })
+      .strict(),
+  })
+  .strict();
+
+/** The deliberately compact payload sent to the model; the full run envelope remains for the UI. */
+export const financeAnalysisModelOutputSchema = z
+  .object({
+    status: runStatusSchema,
+    runId: resourceIdSchema,
+    gateOutcome: z.enum(["allowed", "warning", "blocked"]).optional(),
+    findings: z.array(qualityFindingSchema).max(MAX_BOUNDED_COLLECTION),
+    metrics: z.array(compactMetricResultSchema).max(128),
+    assumptions: z.array(boundedTextSchema).max(32),
+    provenance: compactProvenanceSchema.optional(),
+    error: runErrorSchema.optional(),
+  })
+  .strict();
+
 export const measurementStatusSchema = z.enum([
   "completed",
   "failed",
@@ -841,6 +947,15 @@ export type FinanceFixtureQuery = z.infer<typeof financeFixtureQuerySchema>;
 export type FinanceFixtureRequest = z.infer<typeof financeFixtureRequestSchema>;
 export type FinanceFixtureResult = z.infer<typeof financeFixtureResultSchema>;
 export type DateRange = z.infer<typeof dateRangeSchema>;
+export type FinanceMetricId = z.infer<typeof financeMetricIdSchema>;
+export type FinanceAnalysisInput = z.infer<typeof financeAnalysisInputSchema>;
+export type FinanceMetricRequest = z.infer<typeof financeMetricRequestSchema>;
+export type FinanceDatasetListResult = z.infer<
+  typeof financeDatasetListResultSchema
+>;
+export type FinanceAnalysisModelOutput = z.infer<
+  typeof financeAnalysisModelOutputSchema
+>;
 export type SchemaField = z.infer<typeof schemaFieldSchema>;
 export type DatasetCatalogEntry = z.infer<typeof datasetCatalogEntrySchema>;
 export type DataProfile = z.infer<typeof dataProfileSchema>;

@@ -186,7 +186,7 @@ function makeEntry(args: {
       provider: args.provider,
       ...(args.fixtureId
         ? {
-            locator: "evaluation/fixtures/finance/finance-regression-v1.json",
+            locator: `evaluation/fixtures/finance/finance-regression-${args.fixtureVersion}.json`,
             fixtureId: args.fixtureId,
             fixtureVersion: args.fixtureVersion,
           }
@@ -227,6 +227,8 @@ const fixtureSchema: SchemaField[] = [
 
 export function registerFinanceFixture(
   permissionContext: PermissionContext,
+  fixture = financeFixture,
+  manifest = financeFixtureManifest,
 ): DatasetCatalogEntry {
   authorize(permissionContext, "dataset:write");
   const state = getState();
@@ -235,31 +237,38 @@ export function registerFinanceFixture(
   const existing = [...state.datasets.values()].find(
     (dataset) =>
       dataset.ownerResourceId === permissionContext.resource.id &&
-      dataset.entry.source.fixtureId === financeFixture.fixtureId &&
-      dataset.entry.source.fixtureVersion === financeFixture.version &&
-      dataset.entry.dataset.contentHash === financeFixtureManifest.contentHash,
+      dataset.entry.source.fixtureId === fixture.fixtureId &&
+      dataset.entry.source.fixtureVersion === fixture.version &&
+      dataset.entry.dataset.contentHash === manifest.contentHash,
   );
   if (existing) return copyEntry(existing.entry);
 
   assertCapacity(state, permissionContext.resource.id, 0);
   const observedAt = new Date().toISOString();
   const datasetId = randomUUID();
-  const contentHash = hashFinanceRows(financeFixture.rows);
+  const contentHash = hashFinanceRows(fixture.rows);
+  if (contentHash !== manifest.contentHash) {
+    throw new DatasetCatalogError(
+      "invalid_registration",
+      "The finance fixture content does not match its manifest.",
+      500,
+    );
+  }
   const entry = makeEntry({
     datasetId,
-    version: financeFixture.version,
+    version: fixture.version,
     contentHash,
     resourceId: permissionContext.resource.id,
     connector: "finance-fixture",
     provider: "capstone-synthetic",
     observedAt,
     freshness: "static",
-    fixtureId: financeFixture.fixtureId,
-    fixtureVersion: financeFixture.version,
+    fixtureId: fixture.fixtureId,
+    fixtureVersion: fixture.version,
     schema: fixtureSchema,
-    rowCount: financeFixture.rows.length,
+    rowCount: fixture.rows.length,
   });
-  const rows = financeFixture.rows.map(({ ticker, date, close }) => [
+  const rows = fixture.rows.map(({ ticker, date, close }) => [
     ticker,
     date,
     close,

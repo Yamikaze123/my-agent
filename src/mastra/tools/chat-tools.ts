@@ -1,9 +1,13 @@
 import { getFinanceFixtureTool } from "./get-finance-fixture";
+import { listFinanceDatasetsTool } from "./list-finance-datasets";
 import { runPythonCodeTool } from "./run-python-code";
+import { runFinanceAnalysisTool } from "./run-finance-analysis";
 
 export const dataAnalysisTools = {
   runPythonCodeTool,
   getFinanceFixtureTool,
+  listFinanceDatasetsTool,
+  runFinanceAnalysisTool,
 } as const;
 
 // Mastra tool calls can use either the registered object key or the tool's

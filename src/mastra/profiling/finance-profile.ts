@@ -6,6 +6,7 @@ import {
   type DatasetCatalogEntry,
 } from "../contracts/finance";
 import type { CsvScalar } from "../connectors/finance-csv";
+import { getFinanceTableShapeError } from "../finance/field-resolution";
 
 export const FINANCE_PROFILE_VERSION = "v1";
 
@@ -24,26 +25,9 @@ export type FinanceProfileInput = {
 };
 
 function assertCatalogShape(input: FinanceProfileInput): void {
-  if (input.columns.length !== input.entry.schema.length) {
-    throw new FinanceProfileError(
-      "Dataset columns do not match the registered schema.",
-    );
-  }
-
-  input.columns.forEach((column, index) => {
-    if (column !== input.entry.schema[index]?.name) {
-      throw new FinanceProfileError(
-        "Dataset columns do not match the registered schema order.",
-      );
-    }
-  });
-
-  for (const row of input.rows) {
-    if (row.length !== input.columns.length) {
-      throw new FinanceProfileError(
-        "A dataset row does not match the registered column count.",
-      );
-    }
+  const shapeError = getFinanceTableShapeError(input);
+  if (shapeError) {
+    throw new FinanceProfileError(shapeError);
   }
 }
 
