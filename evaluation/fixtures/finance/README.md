@@ -14,6 +14,16 @@ This fixture is for evaluation, offline development, and explicitly
 reproducible requests. Ordinary user finance requests should continue to use
 the live `yfinance` connector, including historical calendar ranges such as 2025.
 
+The `happy/` directory contains small synthetic CSV files for manually testing
+the Finance data panel's upload, profile, quality, and metric flows. Upload
+`single-ticker-all-metrics.csv` to try every metric with one ticker, or
+`multi-ticker-comparison.csv` to check per-ticker results and comparison
+rendering. Both contain three consecutive monthly observations per ticker, so
+they satisfy the metric minimums and avoid missing-period warnings. The
+single-ticker sample has a total return of -1%, annualized volatility of about
+48.9898%, and maximum drawdown of -10%. These values are synthetic and are not
+investment data.
+
 `finance-regression-v2.json` is a held-out-quality candidate with irregular
 month spacing and a pronounced drawdown/recovery episode. Its manifest is
 `finance-regression-v2-manifest.json`; compute and record its content hash

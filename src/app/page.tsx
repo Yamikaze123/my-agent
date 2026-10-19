@@ -12,6 +12,12 @@ import {
   PromptInputTextarea,
   PromptInputTools,
 } from "@/components/ai-elements/prompt-input";
+import { FinanceDatasetControls } from "@/components/finance/dataset-controls";
+import { FinanceAnalysisResult } from "@/components/finance/analysis-result";
+import {
+  analysisRunResultSchema,
+  type AnalysisRunResult,
+} from "@/mastra/contracts/finance";
 
 import {
   Conversation,
@@ -94,6 +100,21 @@ const CAPABILITIES = [
 
 const MAX_HISTORY_AUTH_RECOVERY_ATTEMPTS = 1;
 
+function financeAnalysisFromOutput(
+  value: unknown,
+): AnalysisRunResult | undefined {
+  let candidate = value;
+  if (typeof candidate === "string") {
+    try {
+      candidate = JSON.parse(candidate) as unknown;
+    } catch {
+      return undefined;
+    }
+  }
+  const parsed = analysisRunResultSchema.safeParse(candidate);
+  return parsed.success ? parsed.data : undefined;
+}
+
 function ToolImages({ output }: { output: Record<string, unknown> }) {
   const images = output?.images as string[] | undefined;
   if (!images || images.length === 0) return null;
@@ -117,6 +138,9 @@ export default function Home() {
   const [input, setInput] = useState<string>("");
   const [isResetting, setIsResetting] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
+  const [isDatasetPanelOpen, setIsDatasetPanelOpen] = useState(false);
+  const [isFinanceActionPending, setIsFinanceActionPending] = useState(false);
+  const [financeResults, setFinanceResults] = useState<AnalysisRunResult[]>([]);
 
   const { messages, setMessages, sendMessage, status, stop, clearError } =
     useChat({
@@ -208,6 +232,7 @@ export default function Home() {
       }
 
       setMessages([]);
+      setFinanceResults([]);
       setInput("");
       clearError();
     } catch (error) {
@@ -217,8 +242,9 @@ export default function Home() {
     }
   };
 
-  const isEmpty = messages.length === 0;
-  const isGenerating = status === "submitted" || status === "streaming";
+  const isEmpty = messages.length === 0 && financeResults.length === 0;
+  const isGenerating =
+    status === "submitted" || status === "streaming" || isFinanceActionPending;
 
   return (
     <main className="min-h-screen bg-[#f4f4f2] p-3 text-foreground sm:p-5 dark:bg-zinc-950">
@@ -381,6 +407,9 @@ export default function Home() {
 
                       if (part.type?.startsWith("tool-")) {
                         const toolPart = part as ToolUIPart;
+                        const financeResult = financeAnalysisFromOutput(
+                          toolPart.output,
+                        );
                         const toolOutput =
                           typeof toolPart.output === "object" &&
                           toolPart.output !== null
@@ -400,10 +429,16 @@ export default function Home() {
                               />
                               <ToolContent>
                                 <ToolInput input={toolPart.input || {}} />
-                                <ToolOutput
-                                  output={toolPart.output}
-                                  errorText={toolPart.errorText}
-                                />
+                                {financeResult ? (
+                                  <FinanceAnalysisResult
+                                    result={financeResult}
+                                  />
+                                ) : (
+                                  <ToolOutput
+                                    output={toolPart.output}
+                                    errorText={toolPart.errorText}
+                                  />
+                                )}
                               </ToolContent>
                             </Tool>
                             <ToolImages output={toolOutput} />
@@ -415,6 +450,11 @@ export default function Home() {
                     })}
                   </div>
                 ))}
+                {financeResults.map((result) => (
+                  <div key={result.runId} className="max-w-full sm:ml-7">
+                    <FinanceAnalysisResult result={result} />
+                  </div>
+                ))}
                 <ConversationScrollButton />
               </ConversationContent>
             </Conversation>
@@ -422,6 +462,15 @@ export default function Home() {
 
           <div className="shrink-0 border-t border-border/70 bg-background/90 px-4 py-4 backdrop-blur sm:px-6 md:py-5">
             <div className="mx-auto w-full max-w-3xl">
+              <FinanceDatasetControls
+                open={isDatasetPanelOpen}
+                onOpenChange={setIsDatasetPanelOpen}
+                onResult={(result) =>
+                  setFinanceResults((current) => [...current, result].slice(-8))
+                }
+                onBusyChange={setIsFinanceActionPending}
+                disabled={isGenerating || isResetting}
+              />
               <PromptInput
                 onSubmit={({ text }) => handleSubmit(text)}
                 className="[&>[data-slot=input-group]]:rounded-2xl [&>[data-slot=input-group]]:border-border/80 [&>[data-slot=input-group]]:bg-background [&>[data-slot=input-group]]:shadow-[0_8px_30px_-18px_rgba(24,24,27,0.35)]"

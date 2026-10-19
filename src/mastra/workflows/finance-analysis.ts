@@ -245,6 +245,7 @@ const qualityGateStep = createStep({
       resourceId: permissionContext.resource.id,
       dataset: entry.dataset,
       status: "completed",
+      profile: inputData.profile,
       idempotencyKey: runIdempotencyKey(
         permissionContext.resource.id,
         entry.dataset.datasetId,
@@ -386,7 +387,7 @@ const metricCalculationStep = createStep({
 export const financeAnalysisWorkflow = createWorkflow({
   id: "finance-analysis-workflow",
   description:
-    "Profile an owned finance dataset and evaluate its quality gate.",
+    "Profile an owned finance dataset, evaluate its quality gate, and calculate the requested metric.",
   inputSchema: financeAnalysisInputSchema,
   outputSchema: analysisRunResultSchema,
   options: {

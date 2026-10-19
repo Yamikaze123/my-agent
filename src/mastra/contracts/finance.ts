@@ -731,6 +731,9 @@ export const analysisRunResultSchema = z
     // A run that fails before its dataset is authorized carries no dataset or
     // provenance; the refinement below requires both for every other status.
     dataset: datasetRefSchema.optional(),
+    // Bounded profile metadata is part of the typed result for the UI. Raw
+    // catalog rows remain inside the server-side workflow.
+    profile: dataProfileSchema.optional(),
     status: runStatusSchema,
     idempotencyKey: z.string().min(1).max(256),
     metrics: z.array(metricResultSchema).max(128),
@@ -799,6 +802,27 @@ export const analysisRunResultSchema = z
           code: "custom",
           path: ["provenance", "dataset"],
           message: "Provenance must describe the run's dataset.",
+        });
+      }
+    }
+
+    if (result.profile) {
+      if (!result.dataset) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["profile"],
+          message: "A profile requires an authorized dataset reference.",
+        });
+      } else if (
+        result.profile.dataset.datasetId !== result.dataset.datasetId ||
+        result.profile.dataset.version !== result.dataset.version ||
+        result.profile.dataset.contentHash !== result.dataset.contentHash ||
+        result.profile.dataset.resourceId !== result.resourceId
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["profile", "dataset"],
+          message: "The profile must describe the run's authorized dataset.",
         });
       }
     }

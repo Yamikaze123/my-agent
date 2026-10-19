@@ -363,9 +363,7 @@ export async function GET(req: Request) {
   return appendAuthCookies(res, req, resolved);
 }
 
-export async function DELETE(req?: Request) {
-  const request =
-    req ?? new Request("http://localhost/api/chat", { method: "DELETE" });
+export async function DELETE(request: Request) {
   let resolved: ReturnType<typeof resolvePermissionContext>;
   try {
     resolved = rotateThread(resolvePermissionContext(request));

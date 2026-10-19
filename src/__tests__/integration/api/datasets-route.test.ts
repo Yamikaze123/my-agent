@@ -118,6 +118,11 @@ describe("/api/datasets", () => {
       }),
     );
     expect(afterDelete.status).toBe(404);
+
+    const catalogAfterDelete = await GET(
+      request("GET", "/api/datasets", { cookie }),
+    );
+    expect(await json(catalogAfterDelete)).toMatchObject({ datasets: [] });
   });
 
   it("accepts a bounded raw CSV upload and rejects cross-resource lookup/deletion", async () => {

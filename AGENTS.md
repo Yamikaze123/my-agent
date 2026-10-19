@@ -14,8 +14,14 @@ This is a **Mastra** project written in TypeScript. Mastra is a framework for bu
 
 ```bash
 pnpm studio # Start Mastra Studio at localhost:4111 (long-running, use a separate terminal)
-pnpm build # Build a production-ready server
+pnpm exec next build --webpack # Build and type-check using webpack in the restricted workspace
 ```
+
+In this sandbox, `pnpm build` invokes Next.js with its default Turbopack bundler.
+Turbopack's CSS/PostCSS processing attempts to bind a local port, which is
+blocked by the workspace sandbox. Use the webpack command above to verify
+production builds here; do not retry the default build after this known
+sandbox-specific failure.
 
 ## Project Structure
 
@@ -47,7 +53,7 @@ Top-level files define how your Mastra project is configured, built, and connect
 - Load the `mastra` skill before any Mastra-related work
 - Register new agents, tools, workflows, and scorers in `src/mastra/index.ts`
 - Use schemas for tool inputs and outputs
-- Run `pnpm build` to verify changes compile
+- Run `pnpm exec next build --webpack` to verify changes compile in this sandbox
 
 ### Never do
 

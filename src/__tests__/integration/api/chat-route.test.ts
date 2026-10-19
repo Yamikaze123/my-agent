@@ -53,7 +53,7 @@ vi.mock("next/server", () => ({
 const { POST, GET, DELETE } = await import("@/app/api/chat/route");
 
 function chatRequest(
-  method: "POST" | "GET",
+  method: "POST" | "GET" | "DELETE",
   opts: { cookie?: string; body?: unknown } = {},
 ) {
   return new Request("http://localhost/api/chat", {
@@ -325,7 +325,7 @@ describe("GET /api/chat — message history", () => {
 
 describe("DELETE /api/chat — new chat", () => {
   it("rotates the thread_id cookie", async () => {
-    const res = await DELETE();
+    const res = await DELETE(chatRequest("DELETE"));
     const cookie = res.headers.get("Set-Cookie") ?? "";
 
     expect(res.status).toBe(200);
