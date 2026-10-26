@@ -5,9 +5,6 @@ settings:
   excludeLinksFromLockfile: false
 
 dependencies:
-  '@ai-sdk/azure':
-    specifier: ^3.0.54
-    version: 3.0.54(zod@4.3.6)
   '@ai-sdk/react':
     specifier: ^3.0.156
     version: 3.0.156(react@19.2.4)(zod@4.3.6)
@@ -32,6 +29,9 @@ dependencies:
   '@mastra/pg':
     specifier: ^1.9.0
     version: 1.9.0(@mastra/core@1.24.1)
+  '@openrouter/ai-sdk-provider':
+    specifier: 2.9.1
+    version: 2.9.1(ai@6.0.154)(zod@4.3.6)
   '@radix-ui/react-use-controllable-state':
     specifier: ^1.2.2
     version: 1.2.2(@types/react@19.2.14)(react@19.2.4)
@@ -177,18 +177,6 @@ packages:
       - supports-color
     dev: false
 
-  /@ai-sdk/azure@3.0.54(zod@4.3.6):
-    resolution: {integrity: sha512-lnW7V+Kl3OKKvNXHaZSf/D35vo4bchfMm7WzxILZMPJ5N7W6i1oDeSXVurSKlR685Kvpi8ZA76LBJKSbzff3yw==}
-    engines: {node: '>=18'}
-    peerDependencies:
-      zod: ^3.25.76 || ^4.1.8
-    dependencies:
-      '@ai-sdk/openai': 3.0.53(zod@4.3.6)
-      '@ai-sdk/provider': 3.0.8
-      '@ai-sdk/provider-utils': 4.0.23(zod@4.3.6)
-      zod: 4.3.6
-    dev: false
-
   /@ai-sdk/gateway@3.0.94(zod@4.3.6):
     resolution: {integrity: sha512-uDDwLZhCkvC89crVS3S90D5L7AcVN8WriGuYVNYgVAaVcvy3Mthy3R9ICfzG75BObhz6pm2FWnhxDfNRK+t69Q==}
     engines: {node: '>=18'}
@@ -201,17 +189,6 @@ packages:
       zod: 4.3.6
     dev: false
 
-  /@ai-sdk/openai@3.0.53(zod@4.3.6):
-    resolution: {integrity: sha512-Wld+Rbc05KaUn08uBt06eEuwcgalcIFtIl32Yp+GxuZXUQwOb6YeAuq+C6da4ch6BurFoqEaLemJVwjBb7x+PQ==}
-    engines: {node: '>=18'}
-    peerDependencies:
-      zod: ^3.25.76 || ^4.1.8
-    dependencies:
-      '@ai-sdk/provider': 3.0.8
-      '@ai-sdk/provider-utils': 4.0.23(zod@4.3.6)
-      zod: 4.3.6
-    dev: false
-
   /@ai-sdk/provider-utils@2.2.8(zod@4.3.6):
     resolution: {integrity: sha512-fqhG+4sCVv8x7nFzYnFo19ryhAa3w096Kmc3hWxMQfW/TubPOmt3A6tYZhl4mUfQWWQMsuSkLrtjlWuXBVSGQA==}
     engines: {node: '>=18'}
@@ -219,7 +196,7 @@ packages:
       zod: ^3.23.8
     dependencies:
       '@ai-sdk/provider': 1.1.3
-      nanoid: 3.3.11
+      nanoid: 3.3.16
       secure-json-parse: 2.7.0
       zod: 4.3.6
     dev: false
@@ -1794,7 +1771,7 @@ packages:
     dependencies:
       '@emnapi/core': 1.9.2
       '@emnapi/runtime': 1.9.2
-      '@tybys/wasm-util': 0.10.1
+      '@tybys/wasm-util': 0.10.3
     dev: true
     optional: true
 
@@ -1947,6 +1924,17 @@ packages:
 
   /@open-draft/until@2.1.0:
     resolution: {integrity: sha512-U69T3ItWHvLwGg5eJ0n3I62nWuE6ilHlmz7zM0npLBRvPRd7e6NYmg54vvRtP5mZG7kZqZCFVdsTWo7BPtBujg==}
+    dev: false
+
+  /@openrouter/ai-sdk-provider@2.9.1(ai@6.0.154)(zod@4.3.6):
+    resolution: {integrity: sha512-okgq07Vdkro4CB5INbfhwa0e6VR1HS7sidNcfHN/MeXLJvX1JmQCff/vem6tcxwT9r1avyFrXSlfv9B28D/Pag==}
+    engines: {node: '>=18'}
+    peerDependencies:
+      ai: ^6.0.0
+      zod: ^3.25.0 || ^4.0.0
+    dependencies:
+      ai: 6.0.154(zod@4.3.6)
+      zod: 4.3.6
     dev: false
 
   /@opentelemetry/api@1.9.0:
@@ -4251,14 +4239,6 @@ packages:
       minimatch: 10.2.5
       path-browserify: 1.0.1
     dev: false
-
-  /@tybys/wasm-util@0.10.1:
-    resolution: {integrity: sha512-9tTaPJLSiejZKx+Bmog4uSubteqTvFrVrURwkmHixBo0G4seD0zUxp98E1DzUBJxLQ3NPwXrGKDiVjwx/DpPsg==}
-    requiresBuild: true
-    dependencies:
-      tslib: 2.8.1
-    dev: true
-    optional: true
 
   /@tybys/wasm-util@0.10.3:
     resolution: {integrity: sha512-F3fo1MYrRJYL3zER0OUOmkutjr1Vp23m7OsSgp7nq4SP6OqX6C/56XFIPAl5bt3zaBRjmW7SGz3u/6LwFpYcOg==}
@@ -9915,7 +9895,6 @@ packages:
     resolution: {integrity: sha512-bzlKTyNJ7+LdGIIwy8ijFpIqEQIvafahV7eYykJ8Cvh42EdJeODoJ6gUJXpQJvej1BddH8OqTXZNE/KfbWAu8Q==}
     engines: {node: ^10 || ^12 || ^13.7 || ^14 || >=15.0.1}
     hasBin: true
-    dev: true
 
   /nanoid@5.1.7:
     resolution: {integrity: sha512-ua3NDgISf6jdwezAheMOk4mbE1LXjm1DfMUDMuJf4AqxLFK3ccGpgWizwa5YV7Yz9EpXwEaWoRXSb/BnV0t5dQ==}

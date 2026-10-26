@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 
-vi.stubEnv("AZURE_OPENAI_API_KEY", "test-api-key");
+vi.stubEnv("OPENROUTER_API_KEY", "test-api-key");
 
 vi.mock("@/mastra/storage", () => ({
   storage: {},

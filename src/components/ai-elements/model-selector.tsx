@@ -135,7 +135,7 @@ export type ModelSelectorLogoProps = Omit<
     | "cortecs"
     | "github-models"
     | "togetherai"
-    | "azure"
+    | "openrouter"
     | "baseten"
     | "huggingface"
     | "opencode"
