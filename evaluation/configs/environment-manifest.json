@@ -1,7 +1,7 @@
 {
   "manifestVersion": "phase-11-v1",
-  "candidateVersion": "working-tree",
-  "sourceCommit": "record-at-freeze",
+  "candidateVersion": "collection-candidate-2026-11-01-v3",
+  "sourceCommit": "ea280d796b1e244dd0bd7e752bc184f210e0982e",
   "runtime": {
     "node": ">=22.13.0",
     "packageManager": "pnpm@8.15.7",

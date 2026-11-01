@@ -934,7 +934,9 @@ const measurementTimingSchema = z
 const measurementCountsSchema = z
   .object({
     toolCalls: boundedCountSchema,
-    workflowSteps: boundedCountSchema,
+    // Null means the execution path does not expose nested workflow-step
+    // telemetry; it must not be inferred from model-generation steps.
+    workflowSteps: boundedCountSchema.nullable(),
     retries: boundedCountSchema,
   })
   .strict();

@@ -273,7 +273,28 @@ describe("Collection boundary", () => {
         error: undefined,
         totalUsage: { inputTokens: 12, outputTokens: 8 },
         steps: [{}],
-        toolCalls: [],
+        toolCalls: [
+          {
+            type: "tool-call",
+            runId: "provider-run-1",
+            from: "AGENT",
+            payload: {
+              toolCallId: "tool-call-1",
+              toolName: "run-python-code",
+              args: {},
+            },
+          },
+          {
+            type: "tool-call",
+            runId: "provider-run-1",
+            from: "AGENT",
+            payload: {
+              toolCallId: "tool-call-2",
+              toolName: "run-python-code",
+              args: {},
+            },
+          },
+        ],
         traceId: "trace-provider-test",
       }),
     } as unknown as Agent;
@@ -289,6 +310,8 @@ describe("Collection boundary", () => {
 
     expect(record.status).toBe("completed");
     expect(record.guardrail?.responseAction).toBe("refused");
+    expect(record.counts?.toolCalls).toBe(2);
+    expect(record.counts?.workflowSteps).toBeNull();
     expect(record.usage).toMatchObject({
       inputTokens: 12,
       outputTokens: 8,
