@@ -252,6 +252,10 @@ export class ChatOutputGuardrailProcessor implements Processor {
   readonly description =
     "Blocks unapproved tool calls, validates generated text policy, and redacts sensitive output before it reaches the client.";
 
+  constructor(
+    private readonly allowedToolNames: ReadonlySet<string> = CHAT_TOOL_NAMES,
+  ) {}
+
   processOutputStep({
     messages,
     toolCalls,
@@ -259,7 +263,7 @@ export class ChatOutputGuardrailProcessor implements Processor {
     abort,
   }: ProcessOutputStepArgs): MastraDBMessage[] {
     for (const toolCall of toolCalls ?? []) {
-      if (!CHAT_TOOL_NAMES.has(toolCall.toolName)) {
+      if (!this.allowedToolNames.has(toolCall.toolName)) {
         return abortViolation(
           abort,
           "unapproved_tool_call",
