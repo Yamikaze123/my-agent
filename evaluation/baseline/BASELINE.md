@@ -2,7 +2,8 @@
 
 Baseline ID: pre-capstone-2026-09-13
 
-Status: technical snapshot captured; behavioral results pending.
+Status: technical snapshot captured; deterministic verification reproduced;
+provider-backed behavioral evidence remains explicitly bounded.
 
 ## Source state
 
@@ -83,6 +84,44 @@ npm run lint
 npm run build
 ```
 
+## Verification supplement — 2026-11-01
+
+The tagged source was extracted into an isolated temporary checkout and
+installed from its own lockfile with Node 22.19.0 and pnpm 8.15.7. The
+candidate working tree was not used as source code for these checks.
+
+| Command                          | Result                                                                      |
+| -------------------------------- | --------------------------------------------------------------------------- |
+| `pnpm install --frozen-lockfile` | Passed; the tagged lockfile resolved 1,340 packages.                        |
+| `pnpm test`                      | Passed: 5 test files and 54 tests.                                          |
+| `pnpm test:coverage`             | Passed: 77.04% statements, 55.88% branches, 86.95% functions, 79.82% lines. |
+| `pnpm lint`                      | Passed with exit 0.                                                         |
+| `pnpm exec tsc --noEmit`         | Passed with exit 0.                                                         |
+| `pnpm exec next build --webpack` | Exit 0; warnings documented below.                                          |
+
+The production build emitted the known E2B bundling warning for a dynamic
+`require` in `vscode-languageserver-types`, reported that Mastra Cloud
+observability was disabled because `MASTRA_CLOUD_ACCESS_TOKEN` was absent,
+and could not resolve the configured PostgreSQL service while initializing and
+creating `mastra_threads`. The build still completed and produced the expected
+static and dynamic routes, but live PostgreSQL-backed memory was not verified
+in this environment.
+
+## Behavioral evidence boundary
+
+The tagged baseline agent is wired to the documented Azure OpenAI deployment
+and reads `AZURE_OPENAI_API_KEY`. That credential was not present in the local
+verification environment. The tagged `.env.example` instead lists an
+`OPENROUTER_API_KEY`, which does not match the agent implementation. No new
+provider-backed baseline conversation was therefore claimed from the clean
+checkout.
+
+The existing screenshots remain observational evidence only. The committed
+`prompt2.2.png` supports a reviewed text response, and the chart screenshots
+support the chart observations. The invalid-ticker error response and a manual
+new-chat/thread reset are not present in the committed evidence. These gaps are
+recorded rather than inferred from the deterministic tests.
+
 ## Known limitations
 
 - Live yfinance data is not reproducible and may be rate-limited.
@@ -101,14 +140,19 @@ npm run build
   yet persisted for every analysis.
 - No live browser, E2B, PostgreSQL-memory, or provider-backed behavioral run
   has been archived yet.
+- The tagged source has a provider configuration mismatch: the agent uses
+  Azure OpenAI while the example environment file names an OpenRouter key.
+- The local verification environment could not resolve the configured
+  PostgreSQL service, so memory-backed runtime behavior remains unverified.
 
 ## Completion checklist
 
-- [ ] Source commit and included documentation are reviewed.
-- [ ] Verification commands pass or their warnings are documented.
+- [x] Source commit and included documentation are reviewed.
+- [x] Verification commands pass or their warnings are documented.
 - [ ] Each prompt in PROMPTS.md has been run and recorded in RESULTS.md.
 - [ ] At least one chart, one text-only response, and one error case have
-      been reviewed.
-- [ ] No secrets or private data are present in the evidence.
+      been reviewed; the chart and text-only portions are confirmed, but the
+      error response is not present in the committed evidence.
+- [x] No secrets or private data are present in the evidence.
 - [x] The pre-capstone baseline commit is tagged as
       `pre-capstone-baseline-2026-09-13-latest`.

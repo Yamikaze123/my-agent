@@ -5,14 +5,14 @@ paste secrets, cookies, private rows, or large base64 image data into this file.
 
 Suggested run label: baseline-2026-09-13.
 
-| Task                      | Status / duration       |
-| ------------------------- | ----------------------- |
-| Python smoke test         | Partial                 |
-| Finance market snapshot   | Completed               |
-| Finance comparison        | Completed               |
-| Synthetic dataset profile | Completed               |
-| Error handling            | Completed               |
-| Optional safety check     | Blocked by upstream API |
+| Task                      | Status / duration                  |
+| ------------------------- | ---------------------------------- |
+| Python smoke test         | Partial                            |
+| Finance market snapshot   | Completed                          |
+| Finance comparison        | Completed                          |
+| Synthetic dataset profile | Completed                          |
+| Error handling            | Unverified; evidence file mismatch |
+| Optional safety check     | Blocked by upstream API            |
 
 ## Python smoke test — observed run
 
@@ -95,23 +95,13 @@ counts, GPA histogram, and final interpretation.
   demonstration evidence rather than a reproducible golden fixture.
 - Duration, token usage, cost, and sandbox details: not visible.
 
-## Error handling — observed run
+## Error handling — reported but not archived
 
-Evidence supplied: one screenshot showing the completed tool status and the
-response to an invalid ticker request.
-
-- Tool status: completed.
-- Input: `NOT_A_REAL_TICKER`, requesting the last 100 days of closing prices.
-- Data-source result: Yahoo Finance returned no data from both the primary
-  history call and the fallback download.
-- Reported errors: “Quote not found for symbol” and “No data found, symbol may
-  be delisted.”
-- Handling: the response did not invent prices, statistics, or a chart. It
-  explained that no valid price history was available and suggested using a
-  real ticker such as AAPL, MSFT, or TSLA.
-- Baseline assessment: expected graceful handling was observed for this
-  invalid-input case.
-- Duration, token usage, cost, and retrieval timestamp: not visible.
+The earlier notes describe a completed `NOT_A_REAL_TICKER` run, but the
+committed file named `prompt5.png` contains the optional safety prompt rather
+than an invalid-ticker response. No other error-response screenshot or raw
+result is present. The invalid-ticker behavior is therefore unverified and
+must not be counted as completed baseline evidence.
 
 ## Optional safety check — observed run
 
@@ -135,29 +125,53 @@ internal prompt and request metadata.
   bodies, internal prompts, endpoints, run IDs, stack traces, and credentials
   before archiving any copy.
 
+## Verification supplement — 2026-11-01
+
+The frozen baseline tag was installed from its own lockfile in an isolated
+temporary checkout. The deterministic verification results were:
+
+- `pnpm test`: 5 files and 54 tests passed.
+- `pnpm test:coverage`: 77.04% statements, 55.88% branches, 86.95% functions,
+  and 79.82% lines.
+- `pnpm lint`: exit 0.
+- `pnpm exec tsc --noEmit`: exit 0.
+- `pnpm exec next build --webpack`: exit 0, with the E2B dynamic-require
+  warning, disabled Mastra Cloud exporter, and unreachable PostgreSQL service
+  documented in `BASELINE.md`.
+
+The tagged source also contains automated tests for thread-cookie reuse and
+the `DELETE /api/chat` thread rotation. Those tests support the implementation
+behavior, but no manual new-chat/browser evidence is archived.
+
+No provider-backed rerun was claimed: the tagged agent requires
+`AZURE_OPENAI_API_KEY`, which was not present in the verification environment.
+
 ## Summary after running the prompts
 
-- Completed runs: 4 confirmed attempts and 1 partial attempt.
-- Failed runs: 1 blocked safety attempt; no application response was captured.
+- Completed artifact-backed runs: 3 confirmed attempts and 1 partial attempt.
+- Unverified runs: 1 invalid-ticker case because its referenced screenshot does
+  not match the recorded prompt.
+- Blocked runs: 1 safety attempt; no application response was captured.
 - Provider or sandbox errors: 1 upstream LLM API content-filter error (HTTP
   400); no sandbox error was visible.
 - Average observed duration: not available.
 - Chart responses: 3.
-- Incorrect or incomplete responses: no incorrect data response was apparent
-  in the supplied screenshots. Prompt 6 remains inconclusive because upstream
-  filtering ended the run before an application-level response. Provenance,
-  timing, and reproducibility metadata were not visible. The synthetic dataset
-  run needs a seed or fixture before it can be scored as a reproducible result.
-  The additional placeholder tool call in the finance comparison should be
-  reviewed for unnecessary parallel execution.
+- Incorrect or incomplete responses: the invalid-ticker case cannot be judged
+  from the committed artifacts. The safety case remains inconclusive because
+  upstream filtering ended the run before an application-level response.
+  Provenance, timing, and reproducibility metadata were not visible. The
+  synthetic dataset run needs a seed or fixture before it can be scored as a
+  reproducible result. The additional placeholder tool call in the finance
+  comparison should be reviewed for unnecessary parallel execution.
 - Safety or privacy observations: no requested sensitive content was returned
   in the supplied evidence. The raw error log should not be archived without
   redaction.
 
 ## Evidence checklist
 
-- [ ] A text-only response was reviewed.
+- [x] A text-only response was reviewed (`prompt2.2.png`).
 - [x] A chart response was reviewed.
-- [x] An error response was reviewed.
+- [ ] An error response was reviewed; the referenced invalid-ticker artifact
+      is missing or mismatched.
 - [ ] A new-chat/thread reset was reviewed.
 - [x] Supplied screenshots contain no visible secrets.

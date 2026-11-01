@@ -1,0 +1,108 @@
+{
+  "manifestVersion": "phase-11-v1",
+  "measurementBatchId": "phase-11-smoke-draft",
+  "candidateVersion": "working-tree",
+  "financeDefinitionVersion": "v1",
+  "policyVersion": "finance-policy-v1",
+  "relativeTolerance": 0.000001,
+  "standardDeviation": "sample-ddof-1",
+  "model": {
+    "provider": "openrouter",
+    "model": "nvidia/nemotron-3.5-super-vl:free",
+    "inputPriceUsdPerMillionTokens": null,
+    "outputPriceUsdPerMillionTokens": null
+  },
+  "taskSets": {
+    "development": "finance-development-v1",
+    "heldOut": "finance-held-out-v1"
+  },
+  "variants": [
+    {
+      "id": "baseline",
+      "label": "Frozen pre-capstone baseline",
+      "architecture": "pre-capstone-baseline",
+      "execution": "read-only-fixture-adapter",
+      "qualityGate": "not-applicable",
+      "authorization": "baseline-adapter",
+      "promptVersion": "baseline-prompt-v1",
+      "policyVersion": "baseline-policy-v1",
+      "model": {
+        "provider": "openrouter",
+        "model": "nvidia/nemotron-3.5-super-vl:free"
+      }
+    },
+    {
+      "id": "governed",
+      "label": "Governed finance core",
+      "architecture": "candidate",
+      "execution": "governed-workflow",
+      "qualityGate": "enabled",
+      "authorization": "server-scoped",
+      "promptVersion": "finance-prompt-v1",
+      "policyVersion": "finance-policy-v1",
+      "model": {
+        "provider": "openrouter",
+        "model": "nvidia/nemotron-3.5-super-vl:free"
+      }
+    },
+    {
+      "id": "ablation",
+      "label": "Governed core without the quality gate",
+      "architecture": "candidate",
+      "execution": "metric-without-quality-gate",
+      "qualityGate": "removed",
+      "authorization": "server-scoped",
+      "promptVersion": "finance-prompt-v1",
+      "policyVersion": "finance-policy-v1",
+      "model": {
+        "provider": "openrouter",
+        "model": "nvidia/nemotron-3.5-super-vl:free"
+      }
+    }
+  ],
+  "fixtureManifests": [
+    {
+      "fixtureId": "finance-regression",
+      "version": "v1",
+      "file": "finance-regression-v1.json",
+      "sourceType": "synthetic",
+      "frequency": "monthly",
+      "currency": "USD",
+      "priceField": "adjusted_close",
+      "rowCount": 39,
+      "tickers": ["AAPL", "MSFT", "TSLA"],
+      "contentHash": "sha256:0013058c7e0a0dbeadb925db167b3c6c125c360049958c8372c5efc6324b99e5"
+    },
+    {
+      "fixtureId": "finance-regression",
+      "version": "v2",
+      "file": "finance-regression-v2.json",
+      "sourceType": "synthetic",
+      "frequency": "monthly",
+      "currency": "USD",
+      "priceField": "adjusted_close",
+      "rowCount": 18,
+      "tickers": ["AAPL", "MSFT", "TSLA"],
+      "contentHash": "sha256:d9f1c1fbe496530c3d24e97906a1648b337fcc164e9bfb23a8058c84ec303c4f"
+    }
+  ],
+  "repeatPolicy": {
+    "deterministicTasks": 1,
+    "stochasticCeiling": 3,
+    "nestedObservations": true
+  },
+  "runBudget": {
+    "maximumTasks": 30,
+    "maximumVariants": 3,
+    "maximumRepeats": 3,
+    "maximumRuns": 270,
+    "maximumModelSteps": 1350,
+    "maximumSandboxMinutes": 202.5
+  },
+  "privacy": {
+    "storeRawRows": false,
+    "storeSecrets": false,
+    "redactPromptsAndOutputs": true,
+    "rawRecordsImmutable": true
+  }
+}

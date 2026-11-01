@@ -1,0 +1,26 @@
+{
+  "manifestVersion": "phase-11-v1",
+  "candidateVersion": "working-tree",
+  "sourceCommit": "record-at-freeze",
+  "runtime": {
+    "node": ">=22.13.0",
+    "packageManager": "pnpm@8.15.7",
+    "next": "16.2.3",
+    "typescript": "5.x",
+    "vitest": "4.1.10"
+  },
+  "mastra": {
+    "core": "1.24.1",
+    "aiSdk": "1.3.3",
+    "memory": "1.15.0",
+    "observability": "1.9.0",
+    "postgres": "1.9.0"
+  },
+  "verificationCommands": [
+    "pnpm test",
+    "pnpm lint",
+    "pnpm exec next build --webpack",
+    "pnpm eval:smoke"
+  ],
+  "secretsPolicy": "Record only whether required credentials are present; never store values."
+}

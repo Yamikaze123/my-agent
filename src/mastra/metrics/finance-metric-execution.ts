@@ -37,6 +37,13 @@ export type FinanceMetricExecutionInput = {
   calculatedAt?: string;
 };
 
+type FinanceMetricCalculationInput = Omit<
+  FinanceMetricExecutionInput,
+  "qualityReport"
+> & {
+  qualityReport?: QualityReport;
+};
+
 function requireFieldIndex(
   entry: DatasetCatalogEntry,
   role: "ticker" | "date" | "price",
@@ -50,7 +57,7 @@ function requireFieldIndex(
   return index;
 }
 
-function toPriceRows(input: FinanceMetricExecutionInput) {
+function toPriceRows(input: FinanceMetricCalculationInput) {
   const tickerIndex = requireFieldIndex(input.entry, "ticker");
   const dateIndex = requireFieldIndex(input.entry, "date");
   const priceIndex = requireFieldIndex(input.entry, "price");
@@ -129,7 +136,7 @@ function groupByTicker(
 }
 
 function metricAssumptions(
-  input: FinanceMetricExecutionInput,
+  input: FinanceMetricCalculationInput,
   definition: ReturnType<typeof getFinanceMetricDefinition>,
   priceFieldName: string,
 ): string[] {
@@ -145,7 +152,7 @@ function metricAssumptions(
     );
   }
 
-  if (input.qualityReport.status === "warning") {
+  if (input.qualityReport?.status === "warning") {
     assumptions.push(
       ...input.qualityReport.findings
         .filter((finding) => finding.gateBehavior === "warn")
@@ -160,12 +167,14 @@ function metricAssumptions(
 
 /**
  * Calculate one documented finance metric for every selected ticker. The
- * caller must already have loaded an owner-authorized catalog view and passed
- * the quality gate; this function never resolves ownership or accepts a
+ * caller must already have loaded an owner-authorized catalog view. The
+ * governed workflow supplies a quality report; the evaluation ablation may
+ * intentionally omit it while retaining the same metric implementation and
+ * ownership boundary. This function never resolves ownership or accepts a
  * resource identifier from model input.
  */
-export function calculateCatalogFinanceMetrics(
-  input: FinanceMetricExecutionInput,
+function calculateCatalogFinanceMetricsInternal(
+  input: FinanceMetricCalculationInput,
 ): MetricResult[] {
   const calculatedAt = input.calculatedAt ?? new Date().toISOString();
   isoTimestampSchema.parse(calculatedAt);
@@ -178,7 +187,7 @@ export function calculateCatalogFinanceMetrics(
     definition,
     priceRows.priceFieldName,
   );
-  const qualityStatus = input.qualityReport.status;
+  const qualityStatus = input.qualityReport?.status;
 
   return [...groups.keys()].sort().map((ticker) => {
     const rows = groups.get(ticker) ?? [];
@@ -208,8 +217,26 @@ export function calculateCatalogFinanceMetrics(
       dimensions: { ticker },
       assumptions,
       validationStatus: qualityStatus === "warning" ? "warning" : "valid",
-      qualityStatus,
+      ...(qualityStatus ? { qualityStatus } : {}),
       calculatedAt,
     });
   });
+}
+
+export function calculateCatalogFinanceMetrics(
+  input: FinanceMetricExecutionInput,
+): MetricResult[] {
+  return calculateCatalogFinanceMetricsInternal(input);
+}
+
+/**
+ * Evaluation-only metric path for the quality-gate ablation. Ownership is
+ * still enforced by the caller's catalog view, but the caller must opt into
+ * this named function instead of accidentally omitting a quality report from
+ * the governed metric path.
+ */
+export function calculateCatalogFinanceMetricsWithoutQualityGate(
+  input: Omit<FinanceMetricExecutionInput, "qualityReport">,
+): MetricResult[] {
+  return calculateCatalogFinanceMetricsInternal(input);
 }

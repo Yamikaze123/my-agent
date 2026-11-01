@@ -906,7 +906,20 @@ const measurementUsageSchema = z
     inputTokens: boundedCountSchema,
     outputTokens: boundedCountSchema,
     modelCalls: boundedCountSchema,
-    estimatedCostUsd: finiteNumberSchema.min(0).max(1_000_000),
+    // A provider price is intentionally optional. The evaluation manifest may
+    // not have a verified rate yet, in which case the record must not claim a
+    // dollar estimate.
+    estimatedCostUsd: finiteNumberSchema.min(0).max(1_000_000).optional(),
+    costStatus: z.enum(["unpriced", "estimated"]).optional(),
+    inputPriceUsdPerMillionTokens: finiteNumberSchema
+      .min(0)
+      .max(1_000_000)
+      .optional(),
+    outputPriceUsdPerMillionTokens: finiteNumberSchema
+      .min(0)
+      .max(1_000_000)
+      .optional(),
+    estimatedCostFormula: z.string().min(1).max(500).optional(),
   })
   .strict();
 
@@ -926,6 +939,28 @@ const measurementCountsSchema = z
   })
   .strict();
 
+const measurementGuardrailSchema = z
+  .object({
+    decision: z.enum([
+      "allowed",
+      "warned",
+      "blocked",
+      "clarified",
+      "refused",
+      "not-evaluated",
+    ]),
+    blockedToolCalls: boundedCountSchema,
+    redactedValues: boundedCountSchema,
+    responseAction: z.enum([
+      "completed",
+      "clarified",
+      "refused",
+      "not-evaluated",
+    ]),
+    recovery: z.enum(["safe-recovery", "none", "not-evaluated"]),
+  })
+  .strict();
+
 export const measurementRecordSchema = z
   .object({
     measurementId: resourceIdSchema,
@@ -933,7 +968,10 @@ export const measurementRecordSchema = z
     candidateVersion: versionSchema,
     taskId: z.string().min(1).max(128),
     variant: z.enum(["baseline", "governed", "ablation"]),
+    resourceId: resourceIdSchema.optional(),
     dataset: datasetRefSchema.optional(),
+    workflowId: z.string().min(1).max(128).optional(),
+    toolIds: z.array(z.string().min(1).max(128)).max(128).optional(),
     model: measurementModelSchema,
     promptVersion: versionSchema,
     policyVersion: versionSchema,
@@ -943,6 +981,9 @@ export const measurementRecordSchema = z
     usage: measurementUsageSchema,
     timing: measurementTimingSchema,
     counts: measurementCountsSchema,
+    guardrail: measurementGuardrailSchema.optional(),
+    sandboxOutcome: sandboxOutcomeSchema.optional(),
+    providerOutcome: providerOutcomeSchema.optional(),
     runId: resourceIdSchema.optional(),
     artifactIds: z.array(z.string().min(1).max(128)).max(128),
     traceIds: z.array(z.string().min(1).max(128)).max(128),
@@ -955,6 +996,33 @@ export const measurementRecordSchema = z
         code: "custom",
         path: ["failureCategory"],
         message: "Failed measurements require a failure category.",
+      });
+    }
+    if (record.status === "skipped" && !record.failureCategory) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["failureCategory"],
+        message: "Skipped measurements require a failure category.",
+      });
+    }
+    if (
+      record.usage.costStatus === "unpriced" &&
+      record.usage.estimatedCostUsd !== undefined
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["usage", "estimatedCostUsd"],
+        message: "Unpriced measurements must not claim an estimated cost.",
+      });
+    }
+    if (
+      record.usage.costStatus === "estimated" &&
+      record.usage.estimatedCostUsd === undefined
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["usage", "estimatedCostUsd"],
+        message: "Estimated-cost measurements require an estimated cost.",
       });
     }
   });

@@ -9,6 +9,7 @@ An AI-powered data analysis assistant built with [Next.js](https://nextjs.org), 
 - **Auto-generated plots** — matplotlib/seaborn charts are captured and displayed inline.
 - **Server-scoped chat memory** — each browser receives a signed server-issued session and resource, with thread cookies cryptographically bound to that scope before Mastra memory is accessed.
 - **Governed finance profile/quality path** — owner-scoped fixture/CSV datasets can be profiled and checked by a registered deterministic Mastra workflow before metric execution.
+- **Measurement-ready evaluation harness** — versioned baseline/governed/ablation manifests, held-out finance tasks, deterministic scoring, and an offline schema-valid smoke run.
 - **Vercel-ready** — deploys to Vercel with no extra infrastructure beyond E2B and a PostgreSQL database.
 
 ## Prerequisites
@@ -93,6 +94,7 @@ src/
 │   ├── profiling/             # Deterministic profile statistics
 │   ├── quality/               # Finance quality rules and findings
 │   ├── workflows/             # Registered profile/quality workflow
+│   ├── evaluation/            # Phase 11 manifests, tasks, runner, and scorer
 │   ├── agents/
 │   │   └── data-analysis-agent.ts  # Agent definition & system prompt
 │   └── tools/
@@ -102,10 +104,11 @@ src/
 
 ## Available Scripts
 
-| Command       | Description                    |
-| ------------- | ------------------------------ |
-| `pnpm dev`    | Start the Next.js dev server   |
-| `pnpm build`  | Build for production           |
-| `pnpm start`  | Start the production server    |
-| `pnpm lint`   | Run ESLint                     |
-| `pnpm studio` | Start the Mastra Studio server |
+| Command           | Description                                                  |
+| ----------------- | ------------------------------------------------------------ |
+| `pnpm dev`        | Start the Next.js dev server                                 |
+| `pnpm build`      | Build for production                                         |
+| `pnpm start`      | Start the production server                                  |
+| `pnpm lint`       | Run ESLint                                                   |
+| `pnpm studio`     | Start the Mastra Studio server                               |
+| `pnpm eval:smoke` | Verify measurement records for all three evaluation variants |
