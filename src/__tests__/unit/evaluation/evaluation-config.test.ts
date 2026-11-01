@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import pilotManifest from "../../../../evaluation/configs/measurement-manifest.phase-12-pilot-v1.json";
+import pilotManifest from "../../../../evaluation/configs/measurement-manifest.pilot-v1.json";
 import { measurementManifestSchema } from "@/mastra/evaluation/contracts";
 import {
   developmentTaskSet,
@@ -8,11 +8,11 @@ import {
 } from "@/mastra/evaluation/runner";
 import { readOnlyFinanceFixtureAdapter } from "@/mastra/evaluation/fixture-adapter";
 
-describe("Phase 11 evaluation configuration", () => {
-  it("loads the Phase 12 pilot collection manifest through the shared schema", () => {
+describe("Evaluation configuration", () => {
+  it("loads the pilot collection manifest through the shared schema", () => {
     const manifest = measurementManifestSchema.parse(pilotManifest);
 
-    expect(manifest.manifestVersion).toBe("phase-12-pilot-v1");
+    expect(manifest.manifestVersion).toBe("pilot-v1");
     expect(manifest.candidateVersion).toBe("working-tree");
     expect(manifest.model.inputPriceUsdPerMillionTokens).toBeNull();
     expect(manifest.model.outputPriceUsdPerMillionTokens).toBeNull();

@@ -393,8 +393,8 @@ export const financeAnalysisWorkflow = createWorkflow({
   options: {
     // Mastra persists a run snapshot (step outputs and the serialized
     // RequestContext) to the configured storage after every step by default.
-    // Owner-scoped run retrieval does not exist until the Phase 6 durable-run
-    // work, so the core path stays synchronous and leaves nothing in storage.
+    // Owner-scoped run retrieval does not exist until durable-run support is
+    // added, so the core path stays synchronous and leaves nothing in storage.
     shouldPersistSnapshot: () => false,
   },
 })

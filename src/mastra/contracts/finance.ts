@@ -968,6 +968,11 @@ export const measurementRecordSchema = z
     candidateVersion: versionSchema,
     taskId: z.string().min(1).max(128),
     variant: z.enum(["baseline", "governed", "ablation"]),
+    // Collection-only metadata lets the append-only archive prove which
+    // planned repetition and execution position produced a record. Offline
+    // records intentionally omit these fields.
+    repetition: boundedCountSchema.min(1).max(3).optional(),
+    executionOrder: boundedCountSchema.min(1).max(270).optional(),
     resourceId: resourceIdSchema.optional(),
     dataset: datasetRefSchema.optional(),
     workflowId: z.string().min(1).max(128).optional(),

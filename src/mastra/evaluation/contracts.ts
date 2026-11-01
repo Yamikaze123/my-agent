@@ -5,6 +5,7 @@ import {
   financeFixtureManifestSchema,
   financeMetricIdSchema,
   financeTickerSchema,
+  isoTimestampSchema,
   measurementRecordSchema,
   type MeasurementRecord,
 } from "../contracts/finance";
@@ -241,6 +242,167 @@ export const measurementManifestSchema = z
     }
   });
 
+const gitCommitSchema = z
+  .string()
+  .regex(/^[0-9a-f]{40}$/, "Source commit must be a 40-character SHA-1.");
+
+const resultLocationSchema = z
+  .string()
+  .regex(
+    /^evaluation\/results\/[A-Za-z0-9._-]+\.json$/,
+    "Collection results must be an evaluation/results JSON file.",
+  );
+
+export const collectionBindingSchema = z
+  .object({
+    sourceCommit: gitCommitSchema,
+    environmentManifest: z
+      .object({
+        manifestVersion: identifier,
+        contentHash: contentHashSchema,
+      })
+      .strict(),
+    resultLocation: resultLocationSchema,
+    taskOrderPolicy: z.enum(["manifest-order", "seeded-shuffle"]),
+    randomizationSeed: z.string().min(1).max(128).optional(),
+    createdAt: isoTimestampSchema,
+  })
+  .strict()
+  .superRefine((binding, ctx) => {
+    if (
+      binding.taskOrderPolicy === "seeded-shuffle" &&
+      binding.randomizationSeed === undefined
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["randomizationSeed"],
+        message: "Seeded collection order requires a randomization seed.",
+      });
+    }
+  });
+
+/**
+ * The immutable, provider-backed collection manifest. The pilot manifest is
+ * intentionally less strict because it is a planning artifact; this schema is
+ * the release boundary and therefore requires exact source/environment
+ * bindings and verified provider rates.
+ */
+export const collectionManifestSchema = measurementManifestSchema
+  .extend({
+    collection: collectionBindingSchema,
+  })
+  .superRefine((manifest, ctx) => {
+    if (manifest.model.inputPriceUsdPerMillionTokens === null) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["model", "inputPriceUsdPerMillionTokens"],
+        message:
+          "The final collection manifest requires a verified input rate.",
+      });
+    }
+    if (manifest.model.outputPriceUsdPerMillionTokens === null) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["model", "outputPriceUsdPerMillionTokens"],
+        message:
+          "The final collection manifest requires a verified output rate.",
+      });
+    }
+  });
+
+const collectionPlanEntrySchema = z
+  .object({
+    sequence: nonNegativeFinite.int().min(1).max(270),
+    taskId: z.string().min(1).max(128),
+    variant: evaluationVariantIdSchema,
+    repetition: nonNegativeFinite.int().min(1).max(3),
+  })
+  .strict();
+
+export const collectionBatchSchema = z
+  .object({
+    manifestVersion: identifier,
+    batchId: z.string().min(1).max(128),
+    candidateVersion: z.string().min(1).max(128),
+    plannedRuns: nonNegativeFinite.int().min(1).max(270),
+    collectedRuns: nonNegativeFinite.int().min(1).max(270),
+    executionOrder: z.array(collectionPlanEntrySchema).min(1).max(270),
+    records: z.array(measurementRecordSchema).min(1).max(270),
+  })
+  .strict()
+  .superRefine((batch, ctx) => {
+    if (batch.plannedRuns !== batch.executionOrder.length) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["plannedRuns"],
+        message: "plannedRuns must equal the recorded execution order length.",
+      });
+    }
+    if (batch.collectedRuns !== batch.records.length) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["collectedRuns"],
+        message: "collectedRuns must equal the number of raw records.",
+      });
+    }
+
+    const sequenceByKey = new Map<string, number>();
+    const sequences = new Set<number>();
+    for (const entry of batch.executionOrder) {
+      const key = `${entry.taskId}:${entry.variant}:${entry.repetition}`;
+      if (sequenceByKey.has(key)) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["executionOrder"],
+          message: "The collection execution order contains a duplicate run.",
+        });
+      }
+      if (sequences.has(entry.sequence)) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["executionOrder"],
+          message:
+            "The collection execution order contains a duplicate sequence.",
+        });
+      }
+      sequenceByKey.set(key, entry.sequence);
+      sequences.add(entry.sequence);
+    }
+
+    for (const [index, record] of batch.records.entries()) {
+      if (
+        record.batchId !== batch.batchId ||
+        record.candidateVersion !== batch.candidateVersion
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["records", index],
+          message: "Every record must match the collection batch envelope.",
+        });
+      }
+      if (
+        record.repetition === undefined ||
+        record.executionOrder === undefined
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["records", index],
+          message:
+            "Collection records require repetition and executionOrder metadata.",
+        });
+        continue;
+      }
+      const key = `${record.taskId}:${record.variant}:${record.repetition}`;
+      if (sequenceByKey.get(key) !== record.executionOrder) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["records", index, "executionOrder"],
+          message: "The record does not match the declared execution order.",
+        });
+      }
+    }
+  });
+
 export const measurementBatchSchema = z
   .array(measurementRecordSchema)
   .min(1)
@@ -282,5 +444,9 @@ export type EvaluationTask = z.infer<typeof evaluationTaskSchema>;
 export type EvaluationTaskSet = z.infer<typeof evaluationTaskSetSchema>;
 export type EvaluationVariant = z.infer<typeof evaluationVariantSchema>;
 export type MeasurementManifest = z.infer<typeof measurementManifestSchema>;
+export type CollectionBinding = z.infer<typeof collectionBindingSchema>;
+export type CollectionManifest = z.infer<typeof collectionManifestSchema>;
+export type CollectionPlanEntry = z.infer<typeof collectionPlanEntrySchema>;
+export type CollectionBatch = z.infer<typeof collectionBatchSchema>;
 export type EnvironmentManifest = z.infer<typeof environmentManifestSchema>;
 export type EvaluationMeasurementRecord = MeasurementRecord;

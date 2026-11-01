@@ -1,6 +1,6 @@
 {
-  "manifestVersion": "phase-12-pilot-v1",
-  "measurementBatchId": "phase-12-pilot-v1",
+  "manifestVersion": "pilot-v1",
+  "measurementBatchId": "pilot-v1",
   "candidateVersion": "working-tree",
   "financeDefinitionVersion": "v1",
   "policyVersion": "finance-policy-v1",

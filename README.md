@@ -94,7 +94,7 @@ src/
 │   ├── profiling/             # Deterministic profile statistics
 │   ├── quality/               # Finance quality rules and findings
 │   ├── workflows/             # Registered profile/quality workflow
-│   ├── evaluation/            # Phase 11 manifests, tasks, runner, and scorer
+│   ├── evaluation/            # Evaluation manifests, tasks, runner, and scorer
 │   ├── agents/
 │   │   └── data-analysis-agent.ts  # Agent definition & system prompt
 │   └── tools/

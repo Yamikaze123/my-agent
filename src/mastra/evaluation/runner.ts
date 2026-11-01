@@ -96,7 +96,15 @@ function findVariant(
 function effectiveManifest(
   options: EvaluationRunnerOptions,
 ): MeasurementManifest {
-  const base = options.manifest ?? measurementManifest;
+  const selected = options.manifest ?? measurementManifest;
+  // Release manifests extend the pilot shape with collection-only source and
+  // result bindings. The deterministic runner consumes the shared measurement
+  // fields and must deliberately discard that envelope field before applying
+  // the strict pilot schema.
+  const base = { ...selected } as MeasurementManifest & {
+    collection?: unknown;
+  };
+  delete base.collection;
   return measurementManifestSchema.parse({
     ...base,
     ...(options.batchId ? { measurementBatchId: options.batchId } : {}),

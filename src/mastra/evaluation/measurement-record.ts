@@ -3,7 +3,13 @@ import {
   measurementRecordSchema,
   type MeasurementRecord,
 } from "../contracts/finance";
-import { measurementBatchSchema } from "./contracts";
+import {
+  collectionBatchSchema,
+  measurementBatchSchema,
+  collectionManifestSchema,
+  type CollectionBatch,
+  type CollectionManifest,
+} from "./contracts";
 
 function deepFreeze<T>(value: T): T {
   if (typeof value !== "object" || value === null) return value;
@@ -63,6 +69,53 @@ export function writeImmutableMeasurementBatch(
 
 export function readMeasurementBatch(filePath: string): MeasurementRecord[] {
   return measurementBatchSchema.parse(
+    JSON.parse(readFileSync(filePath, "utf8")),
+  );
+}
+
+/**
+ * Write the final collection manifest exactly once. A release manifest is
+ * evidence, so an existing file is never replaced by a later run.
+ */
+export function writeImmutableCollectionManifest(
+  filePath: string,
+  manifest: CollectionManifest,
+): void {
+  if (existsSync(filePath)) {
+    throw new Error(`Collection manifest already exists at ${filePath}.`);
+  }
+  const serialized = JSON.stringify(
+    collectionManifestSchema.parse(manifest),
+    null,
+    2,
+  );
+  writeFileSync(filePath, `${serialized}\n`, {
+    encoding: "utf8",
+    flag: "wx",
+  });
+}
+
+/** Write one immutable collection batch containing its execution order. */
+export function writeImmutableCollectionBatch(
+  filePath: string,
+  batch: CollectionBatch,
+): void {
+  if (existsSync(filePath)) {
+    throw new Error(`Collection batch already exists at ${filePath}.`);
+  }
+  const serialized = JSON.stringify(
+    collectionBatchSchema.parse(batch),
+    null,
+    2,
+  );
+  writeFileSync(filePath, `${serialized}\n`, {
+    encoding: "utf8",
+    flag: "wx",
+  });
+}
+
+export function readCollectionBatch(filePath: string): CollectionBatch {
+  return collectionBatchSchema.parse(
     JSON.parse(readFileSync(filePath, "utf8")),
   );
 }

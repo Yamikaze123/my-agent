@@ -32,7 +32,7 @@ before freezing the evaluation batch.
 The `defective/` directory contains separate quality fixtures for duplicate
 rows, out-of-order dates, a missing month, non-positive prices, mixed currency,
 and prompt-injection text. Expected findings are recorded in its manifest, and
-a manifest-driven test runs every listed file through the Phase 5 profiler and
+a manifest-driven test runs every listed file through the profiler and
 quality rules. The rules block duplicate rows, out-of-order dates, non-positive
 prices, and mixed currency. A missing month and prompt-injection text produce
 non-blocking warnings (`missing-period` and `untrusted-content-present`), so the
