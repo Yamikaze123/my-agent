@@ -22,9 +22,7 @@ import {
   writeImmutableCollectionManifest,
   writeImmutableCollectionBatch,
 } from "./measurement-record";
-import {
-  createMastraProviderCollectionExecutor,
-} from "./provider-runner";
+import { createMastraProviderCollectionExecutor } from "./provider-runner";
 import type { PermissionContext } from "../security/permission-context";
 
 const COLLECTION_VARIANT_IDS = [
@@ -37,10 +35,7 @@ export type CollectionAgentMap = Partial<
   Record<EvaluationVariant["id"], Agent>
 >;
 
-export type CollectionAgentSet = Record<
-  EvaluationVariant["id"],
-  Agent
->;
+export type CollectionAgentSet = Record<EvaluationVariant["id"], Agent>;
 
 export type CollectionCommandOptions = {
   /** Absolute or root-relative path to the already-frozen final manifest. */
@@ -121,7 +116,9 @@ function readJson(filePath: string, label: string): unknown {
 
 function parseManifest(filePath: string): CollectionManifest {
   try {
-    return collectionManifestSchema.parse(readJson(filePath, "collection manifest"));
+    return collectionManifestSchema.parse(
+      readJson(filePath, "collection manifest"),
+    );
   } catch (error) {
     if (error instanceof CollectionCommandError) throw error;
     throw new CollectionCommandError(
@@ -145,7 +142,9 @@ function parseEnvironmentManifest(filePath: string): EnvironmentManifest {
 
 function parseTaskSet(filePath: string): EvaluationTaskSet {
   try {
-    return evaluationTaskSetSchema.parse(readJson(filePath, "held-out task set"));
+    return evaluationTaskSetSchema.parse(
+      readJson(filePath, "held-out task set"),
+    );
   } catch (error) {
     if (error instanceof CollectionCommandError) throw error;
     throw new CollectionCommandError(
@@ -178,7 +177,10 @@ function resolveResultPath(
   return resultPath;
 }
 
-function resolveManifestOutputPath(rootDir: string, outputPath: string): string {
+function resolveManifestOutputPath(
+  rootDir: string,
+  outputPath: string,
+): string {
   const configsRoot = resolve(rootDir, "evaluation", "configs");
   const manifestPath = resolveInputPath(rootDir, outputPath);
   const relativeManifestPath = relative(configsRoot, manifestPath);
@@ -240,11 +242,43 @@ function gitValue(rootDir: string, args: readonly string[]): string {
   }
 }
 
-function assertGitState(rootDir: string, manifest: CollectionManifest): void {
-  assertGitStateForCommit(rootDir, manifest.collection.sourceCommit);
+function repoRelativePath(rootDir: string, filePath: string): string {
+  const absolutePath = resolve(rootDir, filePath);
+  const relativePath = relative(rootDir, absolutePath);
+  if (
+    relativePath.length === 0 ||
+    isAbsolute(relativePath) ||
+    relativePath === ".." ||
+    relativePath.startsWith(`..${sep}`)
+  ) {
+    throw new CollectionCommandError(
+      "A Git guard exclusion must remain inside the source checkout.",
+    );
+  }
+  return relativePath.split(sep).join("/");
 }
 
-function assertGitStateForCommit(rootDir: string, sourceCommit: string): void {
+function gitStatusExclusions(
+  rootDir: string,
+  allowedDirtyPaths: readonly string[],
+): string[] {
+  // Documentation is deliberately outside the executable candidate boundary.
+  // The other paths are freeze-time evidence, not source code. Keep this list
+  // explicit so a new dirty source file still blocks collection.
+  const paths = ["doc", ...allowedDirtyPaths].map((path) =>
+    repoRelativePath(rootDir, path),
+  );
+  return [...new Set(paths)].flatMap((path) => [
+    `:(exclude)${path}`,
+    `:(exclude)${path}/**`,
+  ]);
+}
+
+function assertGitStateForCommit(
+  rootDir: string,
+  sourceCommit: string,
+  allowedDirtyPaths: readonly string[] = [],
+): void {
   const currentCommit = gitValue(rootDir, ["rev-parse", "HEAD"]);
   if (currentCommit !== sourceCommit) {
     throw new CollectionCommandError(
@@ -255,6 +289,9 @@ function assertGitStateForCommit(rootDir: string, sourceCommit: string): void {
     "status",
     "--porcelain",
     "--untracked-files=all",
+    "--",
+    ".",
+    ...gitStatusExclusions(rootDir, allowedDirtyPaths),
   ]);
   if (status.length > 0) {
     throw new CollectionCommandError(
@@ -279,7 +316,8 @@ export function freezeCollectionManifest(
   );
   const outputPath = resolveManifestOutputPath(rootDir, options.outputPath);
   const environment = parseEnvironmentManifest(environmentManifestPath);
-  const candidateVersion = options.candidateVersion ?? environment.candidateVersion;
+  const candidateVersion =
+    options.candidateVersion ?? environment.candidateVersion;
   const sourceCommit = options.sourceCommit ?? environment.sourceCommit;
 
   if (candidateVersion !== environment.candidateVersion) {
@@ -303,7 +341,10 @@ export function freezeCollectionManifest(
     );
   }
   if (options.verifyGitState !== false) {
-    assertGitStateForCommit(rootDir, sourceCommit);
+    assertGitStateForCommit(rootDir, sourceCommit, [
+      environmentManifestPath,
+      outputPath,
+    ]);
   }
   if (existsSync(outputPath)) {
     throw new CollectionCommandError(
@@ -322,10 +363,8 @@ export function freezeCollectionManifest(
       environmentManifest: environment,
       environmentManifestHash,
       resultLocation: options.resultLocation,
-      inputPriceUsdPerMillionTokens:
-        options.inputPriceUsdPerMillionTokens,
-      outputPriceUsdPerMillionTokens:
-        options.outputPriceUsdPerMillionTokens,
+      inputPriceUsdPerMillionTokens: options.inputPriceUsdPerMillionTokens,
+      outputPriceUsdPerMillionTokens: options.outputPriceUsdPerMillionTokens,
       taskOrderPolicy: options.taskOrderPolicy,
       randomizationSeed: options.randomizationSeed,
       createdAt: options.createdAt,
@@ -354,7 +393,9 @@ export function freezeCollectionManifest(
 export function resolveCollectionAgents(
   agents: CollectionAgentMap,
 ): CollectionAgentSet {
-  const missing = COLLECTION_VARIANT_IDS.filter((variantId) => !agents[variantId]);
+  const missing = COLLECTION_VARIANT_IDS.filter(
+    (variantId) => !agents[variantId],
+  );
   if (missing.length > 0) {
     throw new CollectionCommandError(
       `Provider collection requires one agent for every variant; missing: ${missing.join(", ")}.`,
@@ -390,10 +431,16 @@ export async function runCollectionCommand(
 
   assertEnvironmentBinding(manifest, environment);
   if (options.verifyGitState !== false) {
-    assertGitState(rootDir, manifest);
+    assertGitStateForCommit(rootDir, manifest.collection.sourceCommit, [
+      environmentManifestPath,
+      manifestPath,
+      resultPath,
+    ]);
   }
   if (taskSet.purpose !== "held-out") {
-    throw new CollectionCommandError("The collection task set must be held-out.");
+    throw new CollectionCommandError(
+      "The collection task set must be held-out.",
+    );
   }
   if (taskSet.taskSetId !== manifest.taskSets.heldOut) {
     throw new CollectionCommandError(
@@ -406,11 +453,11 @@ export async function runCollectionCommand(
     );
   }
 
-  const executor: CollectionExecutor =
-    createMastraProviderCollectionExecutor({
-      agents,
-      permissionContext: options.permissionContext,
-    });
+  const executor: CollectionExecutor = createMastraProviderCollectionExecutor({
+    agents,
+    permissionContext: options.permissionContext,
+    rootDir,
+  });
   const batch = await runCollection({
     manifest,
     taskSet,

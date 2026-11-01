@@ -6,14 +6,25 @@ import {
   SensitiveDataFilter,
 } from "@mastra/observability";
 import { dataAnalysisAgent } from "./agents/data-analysis-agent";
+import {
+  collectionAblationAgent,
+  collectionBaselineAgent,
+  collectionGovernedAgent,
+} from "./evaluation/agents";
 import { ToolPayloadCompactor } from "./observability/tool-payload-compactor";
 import { dataAnalysisTools } from "./tools/chat-tools";
+import { financeAnalysisAblationWorkflow } from "./workflows/finance-analysis-ablation";
 import { financeAnalysisWorkflow } from "./workflows/finance-analysis";
 import { storage } from "./storage";
 
 export const mastra = new Mastra({
-  agents: { dataAnalysisAgent },
-  workflows: { financeAnalysisWorkflow },
+  agents: {
+    dataAnalysisAgent,
+    collectionBaselineAgent,
+    collectionGovernedAgent,
+    collectionAblationAgent,
+  },
+  workflows: { financeAnalysisWorkflow, financeAnalysisAblationWorkflow },
   tools: dataAnalysisTools,
   storage,
   logger: new PinoLogger({
