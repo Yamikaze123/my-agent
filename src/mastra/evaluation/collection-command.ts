@@ -11,11 +11,15 @@ import {
   type EnvironmentManifest,
   type EvaluationTaskSet,
   type EvaluationVariant,
+  type ProviderRetryPolicy,
 } from "./contracts";
 import {
   createCollectionManifest,
   runCollection,
   sha256Content,
+  DEFAULT_COLLECTION_PROGRESS_INTERVAL_MS,
+  type CollectionProgress,
+  type CollectionProgressHandler,
   type CollectionExecutor,
 } from "./collection";
 import {
@@ -48,6 +52,10 @@ export type CollectionCommandOptions = {
   rootDir?: string;
   agents: CollectionAgentMap;
   permissionContext?: PermissionContext;
+  /** Defaults to a concise stderr report every two minutes. */
+  progressIntervalMs?: number;
+  /** Overrides the default stderr progress reporter. */
+  onProgress?: CollectionProgressHandler;
   /** Tests may disable Git verification when running from a temporary root. */
   verifyGitState?: boolean;
 };
@@ -77,6 +85,7 @@ export type CollectionManifestFreezeOptions = {
   outputPriceUsdPerMillionTokens: number;
   taskOrderPolicy?: "manifest-order" | "seeded-shuffle";
   randomizationSeed?: string;
+  providerRetryPolicy?: ProviderRetryPolicy;
   createdAt?: string;
   /** Tests may disable Git verification when running from a temporary root. */
   verifyGitState?: boolean;
@@ -93,6 +102,16 @@ export class CollectionCommandError extends Error {
     super(message);
     this.name = "CollectionCommandError";
   }
+}
+
+function reportCollectionProgress(progress: CollectionProgress): void {
+  const elapsedMinutes = Math.floor(progress.elapsedMs / 60_000);
+  const activeRun = progress.currentEntry
+    ? `; current ${progress.currentEntry.sequence}/${progress.plannedRuns}: ${progress.currentEntry.taskId} (${progress.currentEntry.variant}, repetition ${progress.currentEntry.repetition})`
+    : "";
+  process.stderr.write(
+    `[collection] ${progress.completedRuns}/${progress.plannedRuns} complete; ${progress.failedRuns} failed; ${elapsedMinutes}m elapsed${activeRun}\n`,
+  );
 }
 
 function readJson(filePath: string, label: string): unknown {
@@ -367,6 +386,7 @@ export function freezeCollectionManifest(
       outputPriceUsdPerMillionTokens: options.outputPriceUsdPerMillionTokens,
       taskOrderPolicy: options.taskOrderPolicy,
       randomizationSeed: options.randomizationSeed,
+      providerRetryPolicy: options.providerRetryPolicy,
       createdAt: options.createdAt,
     });
   } catch (error) {
@@ -424,6 +444,11 @@ export async function runCollectionCommand(
     options.taskSetPath ?? "evaluation/tasks/held-out.json",
   );
   const manifest = parseManifest(manifestPath);
+  if (!manifest.collection.providerRetryPolicy) {
+    throw new CollectionCommandError(
+      "The collection manifest must freeze a provider retry policy; create a new manifest before running the updated harness.",
+    );
+  }
   const environment = parseEnvironmentManifest(environmentManifestPath);
   const taskSet = parseTaskSet(taskSetPath);
   const agents = resolveCollectionAgents(options.agents);
@@ -462,6 +487,9 @@ export async function runCollectionCommand(
     manifest,
     taskSet,
     executor,
+    progressIntervalMs:
+      options.progressIntervalMs ?? DEFAULT_COLLECTION_PROGRESS_INTERVAL_MS,
+    onProgress: options.onProgress ?? reportCollectionProgress,
   });
 
   mkdirSync(dirname(resultPath), { recursive: true });

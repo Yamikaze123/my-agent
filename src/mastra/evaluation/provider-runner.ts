@@ -3,6 +3,7 @@ import type { ToolCallChunk } from "@mastra/core/stream";
 import { randomUUID } from "node:crypto";
 import {
   measurementRecordSchema,
+  type MeasurementProviderFailureDiagnostic,
   type MeasurementRecord,
 } from "../contracts/finance";
 import {
@@ -17,6 +18,11 @@ import {
   setCollectionTaskContext,
 } from "./collection-fixture";
 import {
+  DEFAULT_PROVIDER_RETRY_POLICY,
+  providerRetryPolicySchema,
+  type ProviderRetryPolicy,
+} from "./contracts";
+import {
   CollectionExecutionError,
   MAX_MODEL_STEPS_PER_RUN,
   type CollectionExecutionRequest,
@@ -29,6 +35,113 @@ import type {
 } from "./contracts";
 
 const MAX_COMPLETION_TOKENS = 3_000;
+
+type ProviderFailureClassification = {
+  diagnostic: MeasurementProviderFailureDiagnostic;
+  retryable: boolean;
+};
+
+const RETRYABLE_NETWORK_CODES: Record<
+  string,
+  MeasurementProviderFailureDiagnostic["code"]
+> = {
+  EAI_AGAIN: "dns",
+  ENOTFOUND: "dns",
+  ETIMEDOUT: "timeout",
+  UND_ERR_CONNECT_TIMEOUT: "timeout",
+  UND_ERR_HEADERS_TIMEOUT: "timeout",
+  ECONNRESET: "connection",
+  ECONNREFUSED: "connection",
+  ECONNABORTED: "connection",
+  EPIPE: "connection",
+  UND_ERR_SOCKET: "connection",
+  ENETUNREACH: "network-unreachable",
+  EHOSTUNREACH: "network-unreachable",
+};
+
+function errorChain(error: unknown): Record<string, unknown>[] {
+  const chain: Record<string, unknown>[] = [];
+  const seen = new Set<unknown>();
+  let current: unknown = error;
+
+  while (
+    current !== null &&
+    typeof current === "object" &&
+    !seen.has(current) &&
+    chain.length < 8
+  ) {
+    seen.add(current);
+    const errorObject = current as Record<string, unknown>;
+    chain.push(errorObject);
+    current = errorObject.cause;
+  }
+
+  return chain;
+}
+
+function classifyProviderFailure(
+  error: unknown,
+): ProviderFailureClassification {
+  const chain = errorChain(error);
+
+  for (const item of chain) {
+    if (typeof item.code === "string") {
+      const code = RETRYABLE_NETWORK_CODES[item.code];
+      if (code) return { diagnostic: { code }, retryable: true };
+    }
+  }
+
+  for (const item of chain) {
+    const status =
+      typeof item.statusCode === "number"
+        ? item.statusCode
+        : typeof item.status === "number"
+          ? item.status
+          : undefined;
+    if (!Number.isInteger(status) || status! < 100 || status! > 599) continue;
+
+    const httpStatus = status!;
+    if (httpStatus === 408) {
+      return {
+        diagnostic: { code: "http-timeout", httpStatus },
+        retryable: true,
+      };
+    }
+    if (httpStatus === 425) {
+      return {
+        diagnostic: { code: "http-early-response", httpStatus },
+        retryable: true,
+      };
+    }
+    if ([500, 502, 503, 504].includes(httpStatus)) {
+      return {
+        diagnostic: { code: "http-server-error", httpStatus },
+        retryable: true,
+      };
+    }
+    return {
+      diagnostic: { code: "http-non-retryable", httpStatus },
+      retryable: false,
+    };
+  }
+
+  return { diagnostic: { code: "provider-error" }, retryable: false };
+}
+
+function retryDelayMs(
+  policy: ProviderRetryPolicy,
+  retryNumber: number,
+): number {
+  const exponentialDelay = Math.min(
+    policy.maxDelayMs,
+    policy.baseDelayMs * 2 ** (retryNumber - 1),
+  );
+  return Math.floor(Math.random() * (exponentialDelay + 1));
+}
+
+function wait(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
 
 type AgentByVariant = Partial<
   Record<CollectionExecutionRequest["variant"]["id"], Agent>
@@ -124,11 +237,17 @@ export async function runMastraProviderTask(args: {
   rootDir?: string;
   maxSteps?: number;
   maxCompletionTokens?: number;
+  retryPolicy?: ProviderRetryPolicy;
 }): Promise<MeasurementRecord> {
   const startedAt = Date.now();
   const runId = randomUUID();
   const maxSteps = args.maxSteps ?? MAX_MODEL_STEPS_PER_RUN;
   const maxCompletionTokens = args.maxCompletionTokens ?? MAX_COMPLETION_TOKENS;
+  const retryPolicy = providerRetryPolicySchema.parse(
+    args.retryPolicy ??
+      args.request.manifest.collection.providerRetryPolicy ??
+      DEFAULT_PROVIDER_RETRY_POLICY,
+  );
   const rootDir = args.rootDir ?? process.cwd();
   const taskContext = collectionTaskContextForTask(args.request.task, rootDir);
   let dataset: ReturnType<typeof registerCollectionTaskDataset>;
@@ -148,22 +267,74 @@ export async function runMastraProviderTask(args: {
         ...(dataset ? { datasetId: dataset.dataset.datasetId } : {}),
       });
     }
-    const output = await args.agent.generate(args.request.task.prompt, {
-      runId,
-      maxSteps,
-      requestContext,
-      // The collection passes no memory option, so evaluation prompts and
-      // outputs are not written to the application's conversational memory.
-      modelSettings: { maxRetries: 0 },
-      providerOptions: {
-        openai: { maxCompletionTokens },
-      },
-    });
+    let output: Awaited<ReturnType<Agent["generate"]>> | undefined;
+    let retries = 0;
+    let completedSteps = 0;
+    const retryDiagnostics: MeasurementProviderFailureDiagnostic[] = [];
 
-    if (output.error) {
+    while (true) {
+      let attemptFailure: unknown;
+      let failed = false;
+
+      try {
+        output = await args.agent.generate(args.request.task.prompt, {
+          runId,
+          maxSteps,
+          requestContext,
+          onStepFinish: () => {
+            completedSteps += 1;
+          },
+          // The collection passes no memory option, so evaluation prompts and
+          // outputs are not written to the application's conversational memory.
+          // Retries are handled here so their count is included in the record.
+          modelSettings: { maxRetries: 0 },
+          providerOptions: {
+            openai: { maxCompletionTokens },
+          },
+        });
+        if (output.error) {
+          failed = true;
+          attemptFailure = output.error;
+        }
+      } catch (error) {
+        failed = true;
+        attemptFailure = error;
+        output = undefined;
+      }
+
+      if (!failed && output) break;
+
+      if (output && Array.isArray(output.steps)) {
+        completedSteps = Math.max(completedSteps, output.steps.length);
+      }
+      const classification = classifyProviderFailure(attemptFailure);
+      const mayRetry =
+        classification.retryable &&
+        retries < retryPolicy.maxRetries &&
+        completedSteps === 0;
+
+      if (!mayRetry) {
+        throw new CollectionExecutionError(
+          "The model provider could not complete the evaluation task.",
+          "provider",
+          retries,
+          retryDiagnostics,
+          classification.diagnostic,
+        );
+      }
+
+      retryDiagnostics.push(classification.diagnostic);
+      retries += 1;
+      await wait(retryDelayMs(retryPolicy, retries));
+    }
+
+    if (!output) {
       throw new CollectionExecutionError(
-        "The model provider returned an execution error.",
+        "The model provider returned no evaluation result.",
         "provider",
+        retries,
+        retryDiagnostics,
+        { code: "unknown" },
       );
     }
 
@@ -219,7 +390,7 @@ export async function runMastraProviderTask(args: {
         // workflow invoked as a tool. Keep this unknown instead of conflating
         // model calls with workflow execution.
         workflowSteps: null,
-        retries: 0,
+        retries,
       },
       guardrail: {
         decision:
@@ -240,6 +411,7 @@ export async function runMastraProviderTask(args: {
       sandboxOutcome: "not-run",
       providerOutcome: "completed",
       runId,
+      ...(retryDiagnostics.length > 0 ? { retryDiagnostics } : {}),
       artifactIds: [],
       traceIds: output.traceId ? [output.traceId] : [],
       recordedAt,
@@ -285,6 +457,7 @@ export function createMastraProviderCollectionExecutor(
       rootDir: options.rootDir,
       maxSteps: options.maxSteps,
       maxCompletionTokens: options.maxCompletionTokens,
+      retryPolicy: request.manifest.collection.providerRetryPolicy,
     });
   };
 }

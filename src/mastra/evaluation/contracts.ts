@@ -253,6 +253,31 @@ const resultLocationSchema = z
     "Collection results must be an evaluation/results JSON file.",
   );
 
+export const DEFAULT_PROVIDER_RETRY_POLICY = {
+  maxRetries: 2,
+  baseDelayMs: 1_000,
+  maxDelayMs: 4_000,
+} as const;
+
+export const providerRetryPolicySchema = z
+  .object({
+    maxRetries: nonNegativeFinite.int().max(3),
+    baseDelayMs: nonNegativeFinite.int().max(60_000),
+    maxDelayMs: nonNegativeFinite.int().max(60_000),
+  })
+  .strict()
+  .superRefine((policy, ctx) => {
+    if (policy.baseDelayMs > policy.maxDelayMs) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["baseDelayMs"],
+        message: "baseDelayMs must not exceed maxDelayMs.",
+      });
+    }
+  });
+
+export type ProviderRetryPolicy = z.infer<typeof providerRetryPolicySchema>;
+
 export const collectionBindingSchema = z
   .object({
     sourceCommit: gitCommitSchema,
@@ -265,6 +290,7 @@ export const collectionBindingSchema = z
     resultLocation: resultLocationSchema,
     taskOrderPolicy: z.enum(["manifest-order", "seeded-shuffle"]),
     randomizationSeed: z.string().min(1).max(128).optional(),
+    providerRetryPolicy: providerRetryPolicySchema.optional(),
     createdAt: isoTimestampSchema,
   })
   .strict()

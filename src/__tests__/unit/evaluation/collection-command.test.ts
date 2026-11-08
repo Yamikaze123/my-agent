@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { Agent } from "@mastra/core/agent";
@@ -127,6 +127,11 @@ describe("collection command", () => {
     expect(result.manifest.collection.environmentManifest.contentHash).toBe(
       result.environmentManifestHash,
     );
+    expect(result.manifest.collection.providerRetryPolicy).toEqual({
+      maxRetries: 2,
+      baseDelayMs: 1_000,
+      maxDelayMs: 4_000,
+    });
     expect(existsSync(outputPath)).toBe(true);
 
     expect(() =>
@@ -181,6 +186,22 @@ describe("collection command", () => {
     await expect(
       runCollectionCommand({ ...options, agents: incompleteAgents }),
     ).rejects.toThrow(/missing: baseline/);
+    expect(agents.governed.generate).not.toHaveBeenCalled();
+    expect(agents.ablation.generate).not.toHaveBeenCalled();
+  });
+
+  it("requires a frozen retry policy before provider calls", async () => {
+    const { options, agents } = setupCollectionCommand();
+    const legacyManifest = JSON.parse(
+      readFileSync(options.manifestPath, "utf8"),
+    ) as { collection: Record<string, unknown> };
+    delete legacyManifest.collection.providerRetryPolicy;
+    writeFileSync(options.manifestPath, JSON.stringify(legacyManifest));
+
+    await expect(runCollectionCommand(options)).rejects.toThrow(
+      /must freeze a provider retry policy/,
+    );
+    expect(agents.baseline.generate).not.toHaveBeenCalled();
     expect(agents.governed.generate).not.toHaveBeenCalled();
     expect(agents.ablation.generate).not.toHaveBeenCalled();
   });

@@ -2,9 +2,11 @@ import { createHash, randomUUID } from "node:crypto";
 import rawPilotManifest from "../../../evaluation/configs/measurement-manifest.pilot-v1.json";
 import {
   measurementRecordSchema,
+  type MeasurementProviderFailureDiagnostic,
   type MeasurementRecord,
 } from "../contracts/finance";
 import {
+  DEFAULT_PROVIDER_RETRY_POLICY,
   collectionBatchSchema,
   environmentManifestSchema,
   measurementManifestSchema,
@@ -18,6 +20,7 @@ import {
   type EvaluationVariant,
   type MeasurementManifest,
   type CollectionManifest,
+  type ProviderRetryPolicy,
 } from "./contracts";
 import { ImmutableMeasurementBatch } from "./measurement-record";
 
@@ -35,6 +38,7 @@ export type CollectionManifestOptions = {
   outputPriceUsdPerMillionTokens: number;
   taskOrderPolicy?: "manifest-order" | "seeded-shuffle";
   randomizationSeed?: string;
+  providerRetryPolicy?: ProviderRetryPolicy;
   createdAt?: string;
 };
 
@@ -70,7 +74,7 @@ export function createCollectionManifest(
 
   return collectionManifestSchema.parse({
     ...pilot,
-    manifestVersion: options.manifestVersion ?? "collection-v1",
+    manifestVersion: options.manifestVersion ?? "collection-v2",
     measurementBatchId: options.measurementBatchId,
     candidateVersion: options.candidateVersion,
     model: {
@@ -86,6 +90,8 @@ export function createCollectionManifest(
       },
       resultLocation: options.resultLocation,
       taskOrderPolicy: options.taskOrderPolicy ?? "manifest-order",
+      providerRetryPolicy:
+        options.providerRetryPolicy ?? DEFAULT_PROVIDER_RETRY_POLICY,
       ...(options.randomizationSeed !== undefined
         ? { randomizationSeed: options.randomizationSeed }
         : {}),
@@ -228,6 +234,18 @@ export type CollectionExecutionResult =
   | MeasurementRecord
   | { record: MeasurementRecord };
 
+export const DEFAULT_COLLECTION_PROGRESS_INTERVAL_MS = 2 * 60 * 1_000;
+
+export type CollectionProgress = {
+  plannedRuns: number;
+  completedRuns: number;
+  failedRuns: number;
+  elapsedMs: number;
+  currentEntry?: CollectionPlanEntry;
+};
+
+export type CollectionProgressHandler = (progress: CollectionProgress) => void;
+
 export type CollectionExecutor = (
   request: CollectionExecutionRequest,
 ) => Promise<CollectionExecutionResult>;
@@ -241,6 +259,9 @@ export class CollectionExecutionError extends Error {
   constructor(
     message: string,
     readonly failureCategory: CollectionFailureCategory = "application",
+    readonly retryCount = 0,
+    readonly retryDiagnostics: MeasurementProviderFailureDiagnostic[] = [],
+    readonly failureDiagnostic?: MeasurementProviderFailureDiagnostic,
   ) {
     super(message);
     this.name = "CollectionExecutionError";
@@ -270,6 +291,10 @@ function costFields(manifest: CollectionManifest) {
 function failedRecord(args: {
   request: CollectionExecutionRequest;
   failureCategory: CollectionFailureCategory;
+  retryCount?: number;
+  retryDiagnostics?: MeasurementProviderFailureDiagnostic[];
+  failureDiagnostic?: MeasurementProviderFailureDiagnostic;
+  latencyMs?: number;
 }): MeasurementRecord {
   const recordedAt = new Date().toISOString();
   return measurementRecordSchema.parse({
@@ -285,6 +310,12 @@ function failedRecord(args: {
     policyVersion: args.request.variant.policyVersion,
     status: "failed",
     failureCategory: args.failureCategory,
+    ...(args.failureDiagnostic
+      ? { failureDiagnostic: args.failureDiagnostic }
+      : {}),
+    ...(args.retryDiagnostics?.length
+      ? { retryDiagnostics: args.retryDiagnostics }
+      : {}),
     scores: { "schema-validity": 0 },
     usage: {
       inputTokens: 0,
@@ -292,8 +323,12 @@ function failedRecord(args: {
       modelCalls: 0,
       ...costFields(args.request.manifest),
     },
-    timing: { latencyMs: 0 },
-    counts: { toolCalls: 0, workflowSteps: 0, retries: 0 },
+    timing: { latencyMs: args.latencyMs ?? 0 },
+    counts: {
+      toolCalls: 0,
+      workflowSteps: 0,
+      retries: args.retryCount ?? 0,
+    },
     guardrail: {
       decision: "not-evaluated",
       blockedToolCalls: 0,
@@ -376,59 +411,107 @@ export async function runCollection(args: {
   manifest: CollectionManifest;
   taskSet: EvaluationTaskSet;
   executor: CollectionExecutor;
+  progressIntervalMs?: number;
+  onProgress?: CollectionProgressHandler;
 }): Promise<CollectionBatch> {
   const plan = buildCollectionPlan(args.manifest, args.taskSet);
   const tasks = taskMap(args.taskSet);
   const batch = new ImmutableMeasurementBatch();
+  const progressIntervalMs =
+    args.progressIntervalMs ?? DEFAULT_COLLECTION_PROGRESS_INTERVAL_MS;
 
-  for (const entry of plan.entries) {
-    const task = tasks.get(entry.taskId);
-    if (!task) {
-      throw new Error(
-        `Collection plan references unknown task ${entry.taskId}.`,
+  if (
+    args.onProgress &&
+    (!Number.isFinite(progressIntervalMs) || progressIntervalMs <= 0)
+  ) {
+    throw new Error("Collection progress interval must be a positive number.");
+  }
+
+  const startedAt = Date.now();
+  let completedRuns = 0;
+  let failedRuns = 0;
+  let currentEntry: CollectionPlanEntry | undefined;
+  const reportProgress = () => {
+    args.onProgress?.({
+      plannedRuns: plan.entries.length,
+      completedRuns,
+      failedRuns,
+      elapsedMs: Date.now() - startedAt,
+      ...(currentEntry ? { currentEntry } : {}),
+    });
+  };
+
+  reportProgress();
+  const progressTimer = args.onProgress
+    ? setInterval(reportProgress, progressIntervalMs)
+    : undefined;
+
+  try {
+    for (const entry of plan.entries) {
+      currentEntry = entry;
+      const task = tasks.get(entry.taskId);
+      if (!task) {
+        throw new Error(
+          `Collection plan references unknown task ${entry.taskId}.`,
+        );
+      }
+      const variant = variantFor(plan.manifest, entry.variant);
+      const request = { manifest: plan.manifest, entry, task, variant };
+      const runStartedAt = Date.now();
+
+      let record: MeasurementRecord;
+      try {
+        const result = await args.executor(request);
+        const returned = recordFromResult(result);
+        assertRecordMatchesRequest(returned, request);
+        record = measurementRecordSchema.parse({
+          ...returned,
+          repetition: entry.repetition,
+          executionOrder: entry.sequence,
+        });
+      } catch (error) {
+        const executionError =
+          error instanceof CollectionExecutionError ? error : undefined;
+        const category = executionError
+          ? executionError.failureCategory
+          : "provider";
+        record = failedRecord({
+          request,
+          failureCategory: category,
+          retryCount: executionError?.retryCount,
+          retryDiagnostics: executionError?.retryDiagnostics,
+          failureDiagnostic: executionError?.failureDiagnostic,
+          latencyMs: Date.now() - runStartedAt,
+        });
+      }
+      batch.append(record);
+      completedRuns += 1;
+      if (record.status === "failed") failedRuns += 1;
+      currentEntry = plan.entries[completedRuns];
+    }
+
+    const result = collectionBatchSchema.parse({
+      manifestVersion: plan.manifest.manifestVersion,
+      batchId: plan.manifest.measurementBatchId,
+      candidateVersion: plan.manifest.candidateVersion,
+      plannedRuns: plan.entries.length,
+      collectedRuns: batch.records.length,
+      executionOrder: plan.entries,
+      records: batch.records,
+    });
+
+    if (!hasUniquePlanCoverage(result)) {
+      throw new CollectionExecutionError(
+        "The collection batch does not cover every planned task, variant, and repetition.",
+        "evaluator",
       );
     }
-    const variant = variantFor(plan.manifest, entry.variant);
-    const request = { manifest: plan.manifest, entry, task, variant };
 
-    let record: MeasurementRecord;
-    try {
-      const result = await args.executor(request);
-      const returned = recordFromResult(result);
-      assertRecordMatchesRequest(returned, request);
-      record = measurementRecordSchema.parse({
-        ...returned,
-        repetition: entry.repetition,
-        executionOrder: entry.sequence,
-      });
-    } catch (error) {
-      const category =
-        error instanceof CollectionExecutionError
-          ? error.failureCategory
-          : "provider";
-      record = failedRecord({ request, failureCategory: category });
-    }
-    batch.append(record);
+    return result;
+  } finally {
+    if (progressTimer) clearInterval(progressTimer);
+    reportProgress();
   }
-
-  const result = collectionBatchSchema.parse({
-    manifestVersion: plan.manifest.manifestVersion,
-    batchId: plan.manifest.measurementBatchId,
-    candidateVersion: plan.manifest.candidateVersion,
-    plannedRuns: plan.entries.length,
-    collectedRuns: batch.records.length,
-    executionOrder: plan.entries,
-    records: batch.records,
-  });
-
-  if (!hasUniquePlanCoverage(result)) {
-    throw new CollectionExecutionError(
-      "The collection batch does not cover every planned task, variant, and repetition.",
-      "evaluator",
-    );
-  }
-
-  return result;
 }
 
 /**

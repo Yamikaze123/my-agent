@@ -893,6 +893,30 @@ export const measurementFailureCategorySchema = z.enum([
   "unknown",
 ]);
 
+export const measurementProviderFailureCodeSchema = z.enum([
+  "dns",
+  "timeout",
+  "connection",
+  "network-unreachable",
+  "http-timeout",
+  "http-early-response",
+  "http-server-error",
+  "http-non-retryable",
+  "provider-error",
+  "unknown",
+]);
+
+export const measurementProviderFailureDiagnosticSchema = z
+  .object({
+    code: measurementProviderFailureCodeSchema,
+    httpStatus: boundedCountSchema.min(100).max(599).optional(),
+  })
+  .strict();
+
+export type MeasurementProviderFailureDiagnostic = z.infer<
+  typeof measurementProviderFailureDiagnosticSchema
+>;
+
 const measurementModelSchema = z
   .object({
     provider: z.string().min(1).max(128),
@@ -984,6 +1008,11 @@ export const measurementRecordSchema = z
     policyVersion: versionSchema,
     status: measurementStatusSchema,
     failureCategory: measurementFailureCategorySchema.optional(),
+    failureDiagnostic: measurementProviderFailureDiagnosticSchema.optional(),
+    retryDiagnostics: z
+      .array(measurementProviderFailureDiagnosticSchema)
+      .max(3)
+      .optional(),
     scores: z.record(identifierSchema, finiteNumberSchema.min(0).max(1)),
     usage: measurementUsageSchema,
     timing: measurementTimingSchema,

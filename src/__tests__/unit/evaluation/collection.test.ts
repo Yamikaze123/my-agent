@@ -94,17 +94,38 @@ function recordFor(request: CollectionExecutionRequest): MeasurementRecord {
   });
 }
 
+function providerRequest(): CollectionExecutionRequest {
+  const manifest = finalManifest();
+  const task = heldOutTaskSet.tasks.find(
+    (candidate) => candidate.fixture?.kind === "csv",
+  )!;
+  const taskSet = { ...heldOutTaskSet, tasks: [task] };
+  const plan = buildCollectionPlan(manifest, taskSet);
+  const entry = plan.entries.find(
+    (candidate) => candidate.variant === "baseline",
+  )!;
+  const variant = manifest.variants.find(
+    (candidate) => candidate.id === entry.variant,
+  )!;
+  return { manifest, entry, task, variant };
+}
+
 describe("Collection boundary", () => {
   it("creates a release manifest without changing the pilot definitions", () => {
     const manifest = finalManifest();
 
-    expect(manifest.manifestVersion).toBe("collection-v1");
+    expect(manifest.manifestVersion).toBe("collection-v2");
     expect(manifest.collection.sourceCommit).toBe(SOURCE_COMMIT);
     expect(manifest.collection.environmentManifest.contentHash).toMatch(
       /^sha256:[0-9a-f]{64}$/,
     );
     expect(manifest.model.inputPriceUsdPerMillionTokens).toBe(0.2);
     expect(manifest.model.outputPriceUsdPerMillionTokens).toBe(0.4);
+    expect(manifest.collection.providerRetryPolicy).toEqual({
+      maxRetries: 2,
+      baseDelayMs: 1_000,
+      maxDelayMs: 4_000,
+    });
     expect(manifest.taskSets).toEqual({
       development: "finance-development-v1",
       heldOut: "finance-held-out-v1",
@@ -192,6 +213,9 @@ describe("Collection boundary", () => {
           throw new CollectionExecutionError(
             "Provider unavailable.",
             "provider",
+            1,
+            [{ code: "dns" }],
+            { code: "timeout" },
           );
         }
         return recordFor(request);
@@ -205,6 +229,13 @@ describe("Collection boundary", () => {
       batch.records.some((record) => record.failureCategory === "provider"),
     ).toBe(true);
     expect(
+      batch.records.find((record) => record.status === "failed"),
+    ).toMatchObject({
+      counts: { retries: 1 },
+      retryDiagnostics: [{ code: "dns" }],
+      failureDiagnostic: { code: "timeout" },
+    });
+    expect(
       batch.records.every(
         (record) =>
           record.repetition !== undefined &&
@@ -214,6 +245,46 @@ describe("Collection boundary", () => {
     expect(
       new Set(batch.records.map((record) => record.executionOrder)).size,
     ).toBe(12);
+  });
+
+  it("reports progress periodically while a run is in flight", async () => {
+    const manifest = finalManifest();
+    const taskSet = {
+      ...heldOutTaskSet,
+      tasks: [
+        heldOutTaskSet.tasks.find((task) => task.fixture?.kind === "csv")!,
+      ],
+    };
+    const progressEvents: Array<{
+      plannedRuns: number;
+      completedRuns: number;
+      failedRuns: number;
+    }> = [];
+
+    const batch = await runCollection({
+      manifest,
+      taskSet,
+      progressIntervalMs: 5,
+      onProgress: (progress) => progressEvents.push(progress),
+      executor: async (request) => {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        return recordFor(request);
+      },
+    });
+
+    expect(batch.plannedRuns).toBe(3);
+    expect(
+      progressEvents.some(
+        (progress) =>
+          progress.completedRuns > 0 &&
+          progress.completedRuns < progress.plannedRuns,
+      ),
+    ).toBe(true);
+    expect(progressEvents.at(-1)).toMatchObject({
+      plannedRuns: 3,
+      completedRuns: 3,
+      failedRuns: 0,
+    });
   });
 
   it("writes the manifest and batch once, never replacing raw evidence", async () => {
@@ -320,6 +391,201 @@ describe("Collection boundary", () => {
     });
     expect(record.traceIds).toEqual(["trace-provider-test"]);
     expect(record).not.toHaveProperty("text");
+  });
+
+  it("retries transient network failures and records sanitized retry details", async () => {
+    const request = providerRequest();
+    const networkError = Object.assign(new Error("secret response body"), {
+      cause: Object.assign(new Error("socket reset"), {
+        code: "ECONNRESET",
+      }),
+    });
+    let calls = 0;
+    const fakeAgent = {
+      generate: async () => {
+        calls += 1;
+        if (calls === 1) {
+          return {
+            text: "",
+            error: networkError,
+            totalUsage: { inputTokens: 0, outputTokens: 0 },
+            steps: [],
+            toolCalls: [],
+          };
+        }
+        return {
+          text: "Completed.",
+          error: undefined,
+          totalUsage: { inputTokens: 12, outputTokens: 8 },
+          steps: [{}],
+          toolCalls: [],
+          traceId: "trace-after-retry",
+        };
+      },
+    } as unknown as Agent;
+
+    const record = await runMastraProviderTask({
+      agent: fakeAgent,
+      request,
+      permissionContext: resolvePermissionContext(
+        new Request("http://localhost/evaluation/provider-retry"),
+      ).permissionContext,
+      retryPolicy: { maxRetries: 2, baseDelayMs: 0, maxDelayMs: 0 },
+    });
+
+    expect(calls).toBe(2);
+    expect(record.status).toBe("completed");
+    expect(record.counts.retries).toBe(1);
+    expect(record.retryDiagnostics).toEqual([{ code: "connection" }]);
+    expect(JSON.stringify(record)).not.toContain("secret response body");
+  });
+
+  it("does not retry authentication failures", async () => {
+    const request = providerRequest();
+    const authError = Object.assign(new Error("secret authorization detail"), {
+      statusCode: 401,
+    });
+    let calls = 0;
+    const fakeAgent = {
+      generate: async () => {
+        calls += 1;
+        return {
+          text: "",
+          error: authError,
+          totalUsage: { inputTokens: 0, outputTokens: 0 },
+          steps: [],
+          toolCalls: [],
+        };
+      },
+    } as unknown as Agent;
+
+    await expect(
+      runMastraProviderTask({
+        agent: fakeAgent,
+        request,
+        permissionContext: resolvePermissionContext(
+          new Request("http://localhost/evaluation/provider-auth-failure"),
+        ).permissionContext,
+        retryPolicy: { maxRetries: 2, baseDelayMs: 0, maxDelayMs: 0 },
+      }),
+    ).rejects.toMatchObject({
+      retryCount: 0,
+      retryDiagnostics: [],
+      failureDiagnostic: {
+        code: "http-non-retryable",
+        httpStatus: 401,
+      },
+    });
+    expect(calls).toBe(1);
+  });
+
+  it("does not retry rate-limit responses", async () => {
+    const request = providerRequest();
+    const rateLimitError = Object.assign(new Error("quota details"), {
+      statusCode: 429,
+    });
+    let calls = 0;
+    const fakeAgent = {
+      generate: async () => {
+        calls += 1;
+        return {
+          text: "",
+          error: rateLimitError,
+          totalUsage: { inputTokens: 0, outputTokens: 0 },
+          steps: [],
+          toolCalls: [],
+        };
+      },
+    } as unknown as Agent;
+
+    await expect(
+      runMastraProviderTask({
+        agent: fakeAgent,
+        request,
+        permissionContext: resolvePermissionContext(
+          new Request("http://localhost/evaluation/provider-rate-limit"),
+        ).permissionContext,
+        retryPolicy: { maxRetries: 2, baseDelayMs: 0, maxDelayMs: 0 },
+      }),
+    ).rejects.toMatchObject({
+      retryCount: 0,
+      failureDiagnostic: {
+        code: "http-non-retryable",
+        httpStatus: 429,
+      },
+    });
+    expect(calls).toBe(1);
+  });
+
+  it("caps transient retries and records the terminal failure", async () => {
+    const request = providerRequest();
+    const networkError = Object.assign(new Error("network detail"), {
+      cause: Object.assign(new Error("connection timed out"), {
+        code: "ETIMEDOUT",
+      }),
+    });
+    let calls = 0;
+    const fakeAgent = {
+      generate: async () => {
+        calls += 1;
+        return {
+          text: "",
+          error: networkError,
+          totalUsage: { inputTokens: 0, outputTokens: 0 },
+          steps: [],
+          toolCalls: [],
+        };
+      },
+    } as unknown as Agent;
+
+    await expect(
+      runMastraProviderTask({
+        agent: fakeAgent,
+        request,
+        permissionContext: resolvePermissionContext(
+          new Request("http://localhost/evaluation/provider-retry-exhausted"),
+        ).permissionContext,
+        retryPolicy: { maxRetries: 2, baseDelayMs: 0, maxDelayMs: 0 },
+      }),
+    ).rejects.toMatchObject({
+      retryCount: 2,
+      retryDiagnostics: [{ code: "timeout" }, { code: "timeout" }],
+      failureDiagnostic: { code: "timeout" },
+    });
+    expect(calls).toBe(3);
+  });
+
+  it("does not replay an agent run after a completed model step", async () => {
+    const request = providerRequest();
+    const networkError = Object.assign(new Error("fetch failed"), {
+      code: "ECONNRESET",
+    });
+    let calls = 0;
+    const fakeAgent = {
+      generate: async (
+        _prompt: unknown,
+        options: { onStepFinish?: () => void },
+      ) => {
+        calls += 1;
+        options.onStepFinish?.();
+        throw networkError;
+      },
+    } as unknown as Agent;
+
+    await expect(
+      runMastraProviderTask({
+        agent: fakeAgent,
+        request,
+        permissionContext: resolvePermissionContext(
+          new Request("http://localhost/evaluation/provider-partial-failure"),
+        ).permissionContext,
+        retryPolicy: { maxRetries: 2, baseDelayMs: 0, maxDelayMs: 0 },
+      }),
+    ).rejects.toMatchObject({
+      retryCount: 0,
+      failureDiagnostic: { code: "connection" },
+    });
+    expect(calls).toBe(1);
   });
 
   it("keeps the deterministic executor compatible with a final manifest", async () => {

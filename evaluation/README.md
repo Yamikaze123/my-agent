@@ -34,7 +34,7 @@ The TypeScript runner and scorer live in
 `src/mastra/evaluation/`. They validate all JSON configuration through Zod,
 verify fixture checksums, keep raw rows out of measurement records, classify
 workflow failures, and write batches through an exclusive-create helper when a
-collection command is added.
+collection command is run.
 
 ## Pilot manifest
 
@@ -62,8 +62,9 @@ The release handoff is implemented in `src/mastra/evaluation/collection.ts`:
   ceilings before execution.
 - `runCollection` invokes a supplied variant executor in recorded order,
   retains classified failures, and validates complete task/variant/repetition
-  coverage. `measurement-record.ts` writes manifests and batches with
-  exclusive-create semantics.
+  coverage. It can emit structured progress snapshots during long runs.
+  `measurement-record.ts` writes manifests and batches with exclusive-create
+  semantics.
 - `provider-runner.ts` adapts an installed Mastra `Agent.generate()` call to a
   redacted measurement record. Supply a separate agent for each architecture;
   the runner does not silently use the governed agent as the historical
@@ -74,7 +75,21 @@ The release handoff is implemented in `src/mastra/evaluation/collection.ts`:
   provider rates. `runCollectionCommand` then validates that manifest’s
   environment binding and clean source commit, requires all three variant
   agents, executes the held-out plan, and writes the result batch exactly once
-  under `evaluation/results/`.
+  under `evaluation/results/`. It reports progress to stderr every two minutes
+  by default; callers can configure the interval or supply a structured
+  progress callback. New `collection-v2` manifests also freeze the provider
+  retry policy. The default allows two jittered retries for transient DNS,
+  connection, timeout, and selected HTTP 408/425/5xx failures. Authentication,
+  quota/rate-limit (429), and other client errors are not retried. A failed
+  agent run is only retried before its first completed model/tool step, so the
+  harness will not replay a run after tools may have had side effects. Records
+  include retry counts and normalized error codes/statuses, never raw provider
+  messages.
+
+`candidateVersion` identifies the release candidate independently of the
+measurement batch ID. A network retry can therefore remain part of the same
+candidate while retaining its own immutable batch ID, manifest, and result
+path.
 
 The final manifest and provider-backed batch are intentionally not checked in
 until the candidate is tagged, the environment manifest is updated with that

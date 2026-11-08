@@ -1,7 +1,7 @@
 {
   "manifestVersion": "phase-11-v1",
-  "candidateVersion": "collection-candidate-2026-11-01-v3",
-  "sourceCommit": "ea280d796b1e244dd0bd7e752bc184f210e0982e",
+  "candidateVersion": "collection-candidate-2026-11-01-v4",
+  "sourceCommit": "fa6dfac3142a6f23f011a1aa81c10f60b2001962",
   "runtime": {
     "node": ">=22.13.0",
     "packageManager": "pnpm@8.15.7",
