@@ -12,6 +12,7 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "eval:smoke": "vitest run src/__tests__/integration/evaluation/measurement-smoke.test.ts",
+    "eval:demo": "node scripts/demo-collection.mjs",
     "sandbox:build": "node sandbox/build-analysis-template.mjs"
   },
   "dependencies": {

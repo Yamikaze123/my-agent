@@ -12,6 +12,19 @@ Run the readiness check with:
 pnpm eval:smoke
 ```
 
+To demonstrate the collection planner and progress reporting without making
+provider calls or writing measurement artifacts, run:
+
+```bash
+pnpm eval:demo
+```
+
+The demo prints each planned run, its configured variant/fixture route, a
+synthetic completion line, periodic progress, and a final summary. It uses a
+synthetic offline executor: its records are demonstration-only and must not be
+treated as evaluation evidence. The regular test suite runs the same demo
+logic quietly; only `pnpm eval:demo` enables the verbose terminal trace.
+
 The smoke run must produce three schema-valid `MeasurementRecord` values for
 `baseline`, `governed`, and `ablation`. The baseline record is explicitly an
 adapter smoke record; it does not claim that the historical tagged agent has
