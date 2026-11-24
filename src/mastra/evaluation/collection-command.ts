@@ -21,10 +21,14 @@ import {
   type CollectionProgress,
   type CollectionProgressHandler,
   type CollectionExecutor,
+  type CollectionRecordHandler,
 } from "./collection";
 import {
+  createPartialCollectionWriter,
+  partialCollectionPath,
   writeImmutableCollectionManifest,
   writeImmutableCollectionBatch,
+  type PartialCollectionWriter,
 } from "./measurement-record";
 import { createMastraProviderCollectionExecutor } from "./provider-runner";
 import type { PermissionContext } from "../security/permission-context";
@@ -59,6 +63,48 @@ export type CollectionCommandOptions = {
   /** Tests may disable Git verification when running from a temporary root. */
   verifyGitState?: boolean;
 };
+
+function reportRunFailure(
+  ...[record, event]: Parameters<CollectionRecordHandler>
+): void {
+  if (record.status !== "failed") return;
+  const code = record.failureDiagnostic?.code;
+  const detail = event.diagnosticMessage ?? (code ? `code ${code}` : "");
+  process.stderr.write(
+    `[collection] run ${event.entry.sequence}/${event.plannedRuns} failed (${record.failureCategory ?? "unknown"}): ${event.entry.taskId} (${event.entry.variant}, repetition ${event.entry.repetition})${detail ? ` - ${detail}` : ""}\n`,
+  );
+}
+
+/**
+ * The agents hard-code their provider model, while every record copies the
+ * model name from the manifest. Refuse to collect when the two disagree, so
+ * a batch can never attribute its measurements to a model that did not
+ * produce them.
+ */
+export async function assertAgentModelsMatchManifest(
+  manifest: CollectionManifest,
+  agents: CollectionAgentSet,
+): Promise<void> {
+  for (const variant of manifest.variants) {
+    const agent = agents[variant.id];
+    let modelId: unknown;
+    try {
+      modelId = (await agent.getModel()).modelId;
+    } catch {
+      modelId = undefined;
+    }
+    if (typeof modelId !== "string" || modelId.length === 0) {
+      throw new CollectionCommandError(
+        `Could not determine the model of the ${variant.id} agent; the collection cannot verify it against the manifest.`,
+      );
+    }
+    if (modelId !== variant.model.model || modelId !== manifest.model.model) {
+      throw new CollectionCommandError(
+        `The ${variant.id} agent runs model ${modelId}, but the manifest records ${variant.model.model} (variant) / ${manifest.model.model} (batch).`,
+      );
+    }
+  }
+}
 
 export type CollectionCommandResult = {
   manifestPath: string;
@@ -455,11 +501,13 @@ export async function runCollectionCommand(
   const resultPath = resolveResultPath(rootDir, manifest);
 
   assertEnvironmentBinding(manifest, environment);
+  const partialPath = partialCollectionPath(resultPath);
   if (options.verifyGitState !== false) {
     assertGitStateForCommit(rootDir, manifest.collection.sourceCommit, [
       environmentManifestPath,
       manifestPath,
       resultPath,
+      partialPath,
     ]);
   }
   if (taskSet.purpose !== "held-out") {
@@ -478,21 +526,58 @@ export async function runCollectionCommand(
     );
   }
 
+  if (existsSync(partialPath)) {
+    throw new CollectionCommandError(
+      `A partial collection file from an interrupted run exists at ${partialPath}. It is not a valid batch; archive or delete it before collecting again.`,
+    );
+  }
+  await assertAgentModelsMatchManifest(manifest, agents);
+
   const executor: CollectionExecutor = createMastraProviderCollectionExecutor({
     agents,
     permissionContext: options.permissionContext,
     rootDir,
   });
-  const batch = await runCollection({
-    manifest,
-    taskSet,
-    executor,
-    progressIntervalMs:
-      options.progressIntervalMs ?? DEFAULT_COLLECTION_PROGRESS_INTERVAL_MS,
-    onProgress: options.onProgress ?? reportCollectionProgress,
-  });
 
+  // Every completed run is appended to a sidecar next to the final output, so
+  // an interrupted collection keeps the runs it already paid for. The final
+  // batch file keeps its semantics: it is written once, exclusively, and only
+  // after the whole batch validates.
   mkdirSync(dirname(resultPath), { recursive: true });
-  writeImmutableCollectionBatch(resultPath, batch);
+  let partial: PartialCollectionWriter;
+  try {
+    partial = createPartialCollectionWriter(partialPath, {
+      manifestVersion: manifest.manifestVersion,
+      batchId: manifest.measurementBatchId,
+      candidateVersion: manifest.candidateVersion,
+    });
+  } catch {
+    throw new CollectionCommandError(
+      `Could not create the partial collection file at ${partialPath}.`,
+    );
+  }
+
+  let batch: CollectionBatch;
+  try {
+    batch = await runCollection({
+      manifest,
+      taskSet,
+      executor,
+      progressIntervalMs:
+        options.progressIntervalMs ?? DEFAULT_COLLECTION_PROGRESS_INTERVAL_MS,
+      onProgress: options.onProgress ?? reportCollectionProgress,
+      onRecord: (record, event) => {
+        partial.append(record, event.diagnosticMessage);
+        reportRunFailure(record, event);
+      },
+    });
+    writeImmutableCollectionBatch(resultPath, batch);
+  } catch (error) {
+    // Leave the sidecar in place: it holds every run that completed.
+    partial.close();
+    throw error;
+  }
+
+  partial.remove();
   return { manifestPath, resultPath, manifest, batch };
 }

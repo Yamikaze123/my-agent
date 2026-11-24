@@ -6,6 +6,10 @@ import {
   type FinanceMetricId,
   type MetricDefinition,
 } from "../contracts/finance";
+import {
+  inferObservationFrequency,
+  type InferredObservationFrequency,
+} from "../finance/observation-frequency";
 
 export const financeMetricPackVersion = "v1";
 
@@ -87,12 +91,13 @@ const metricDefinitions: MetricDefinition[] = [
     version: financeMetricPackVersion,
     name: "Annualized volatility",
     description:
-      "The sample standard deviation of consecutive monthly returns, annualized by the square root of twelve.",
-    formula: "sample_stddev((P_t / P_(t-1)) - 1) * sqrt(12) * 100",
+      "The sample standard deviation of returns between consecutive observations, annualized by the square root of the number of return periods per year. Periods per year are inferred from the typical spacing of the observations: 252 for daily, 52 for weekly, 12 for monthly, 4 for quarterly, and 1 for annual data.",
+    formula:
+      "sample_stddev((P_t / P_(t-1)) - 1) * sqrt(periods_per_year) * 100",
     inputFields: ["ticker", "date", "close"],
     dimensions: ["ticker"],
     filters: ["one ticker at a time", "observations ordered by date"],
-    timeGrain: "monthly",
+    timeGrain: "observation",
     unit: "percent",
     currency: "USD",
     nullBehavior: "reject",
@@ -100,6 +105,7 @@ const metricDefinitions: MetricDefinition[] = [
       "Requires at least three prices to produce two returns.",
       "Uses sample, not population, standard deviation.",
       "Missing or non-positive prices are rejected.",
+      "Rejected when the observation spacing is not daily, weekly, monthly, quarterly, or annual, because no annualization factor applies.",
     ],
     minimumObservations: 3,
     annualization: "sqrt-periods-per-year",
@@ -239,6 +245,22 @@ function sampleStandardDeviation(values: readonly number[]): number {
   return Math.sqrt(squaredDeviation / (values.length - 1));
 }
 
+/**
+ * The observation frequency of one ticker's rows, or undefined when the
+ * spacing matches no supported frequency. Exposed so a result can disclose
+ * the frequency and annualization factor that were actually applied.
+ */
+export function inferSeriesFrequency(
+  rows: readonly Pick<FinancePriceRow, "date">[],
+): InferredObservationFrequency | undefined {
+  return inferObservationFrequency(
+    rows.flatMap((row) => {
+      const date = normalizeFinanceDate(row.date);
+      return date ? [date] : [];
+    }),
+  );
+}
+
 export function calculateAnnualizedVolatility(
   rows: readonly FinancePriceRow[],
 ): number {
@@ -249,11 +271,22 @@ export function calculateAnnualizedVolatility(
     );
   }
 
+  // Annualizing with a fixed factor is only correct for one frequency: daily
+  // returns scaled by sqrt(12) understate volatility by a factor of about 4.6.
+  const frequency = inferSeriesFrequency(series);
+  if (!frequency) {
+    throw new MetricCalculationError(
+      "Annualized volatility requires observations at a daily, weekly, monthly, quarterly, or annual frequency; the spacing of this series matches none of them.",
+    );
+  }
+
   const returns = series.slice(1).map((row, index) => {
     const previous = series[index].close;
     return row.close / previous - 1;
   });
-  return sampleStandardDeviation(returns) * Math.sqrt(12) * 100;
+  return (
+    sampleStandardDeviation(returns) * Math.sqrt(frequency.periodsPerYear) * 100
+  );
 }
 
 export function calculateMaximumDrawdown(

@@ -30,7 +30,8 @@ describe.skipIf(!shouldRun)("provider collection smoke", () => {
       inputPriceUsdPerMillionTokens: 0,
       outputPriceUsdPerMillionTokens: 0,
     });
-    const { collectionAgents } = await import("@/mastra/evaluation/agents");
+    const { getCollectionAgents } = await import("@/mastra/evaluation/agents");
+    const collectionAgents = getCollectionAgents();
 
     const records = await runMastraProviderSmoke({
       manifest,

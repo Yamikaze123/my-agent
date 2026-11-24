@@ -4,10 +4,12 @@ import { createUIMessageStreamResponse, type UIMessage } from "ai";
 import { NextResponse } from "next/server";
 import { MAX_AGENT_STEPS } from "@/mastra/config";
 import {
+  CHAT_LIMITS,
   CHAT_POLICY_VERSION,
   ChatGuardrailError,
   redactChatMessages,
   redactSensitiveText,
+  selectLatestUserMessage,
   validateChatRequest,
 } from "@/mastra/security/chat-policy";
 import {
@@ -22,12 +24,18 @@ import {
   sessionCookieName,
   threadCookieName,
 } from "@/mastra/security/permission-context";
+import {
+  enforceRateLimit,
+  rateLimitResponse,
+} from "@/mastra/security/rate-limit";
 
 // Comparison requests can require a complete data-fetching, validation,
 // statistics, and plotting script. Keep enough room for the tool arguments so
 // the stream does not end while a tool call is still being assembled.
-const MAX_COMPLETION_TOKENS = 3_000;
+const MAX_OUTPUT_TOKENS = 3_000;
 const MAX_MODEL_RETRIES = 0;
+// Server memory is the only source of conversation history for the model.
+const MEMORY_HISTORY_MESSAGES = 12;
 const MAX_HISTORY_OUTPUT_LENGTH = 8_000;
 
 type JsonRecord = Record<string, unknown>;
@@ -243,11 +251,68 @@ function configurationResponse(): Response {
   );
 }
 
+function requestTooLarge(): ChatGuardrailError {
+  return new ChatGuardrailError(
+    "message_too_large",
+    "That chat request is too large. Reload the page and try again.",
+    413,
+  );
+}
+
+/**
+ * Read the JSON body without buffering more than the request limit. A missing
+ * or understated Content-Length cannot bypass the cap because the stream is
+ * counted as it is read.
+ */
+async function readBoundedJson(request: Request): Promise<unknown> {
+  const maxBytes = CHAT_LIMITS.maxRequestBytes;
+  const contentLength = request.headers.get("content-length");
+  if (
+    contentLength !== null &&
+    /^\d+$/.test(contentLength) &&
+    Number(contentLength) > maxBytes
+  ) {
+    throw requestTooLarge();
+  }
+
+  if (!request.body) return JSON.parse("");
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      totalBytes += value.byteLength;
+      if (totalBytes > maxBytes) {
+        await reader.cancel();
+        throw requestTooLarge();
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  const bytes = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+}
+
+/**
+ * Confirm that a stored thread, if one exists, belongs to the caller.
+ * Returns whether the thread exists: a signed thread ID is issued before the
+ * first message is saved, so "not stored yet" is a normal state.
+ */
 async function assertStoredThreadOwnership(
   mastra: MastraInstance,
   threadId: string,
   resourceId: string,
-): Promise<void> {
+): Promise<boolean> {
   const memory = await mastra.getAgentById("data-analysis-agent").getMemory();
   if (!memory?.getThreadById) throw new AuthorizationError();
 
@@ -255,6 +320,7 @@ async function assertStoredThreadOwnership(
   if (thread && thread.resourceId !== resourceId) {
     throw new AuthorizationError();
   }
+  return Boolean(thread);
 }
 
 export async function POST(req: Request) {
@@ -271,6 +337,32 @@ export async function POST(req: Request) {
     throw error;
   }
 
+  const limit = enforceRateLimit(req, resolved, "chat:send");
+  if (!limit.allowed) return rateLimitResponse(limit);
+
+  // Validate the request before loading Mastra or touching storage, so a
+  // malformed or oversized body costs nothing beyond reading it.
+  let params: JsonRecord;
+  try {
+    const body = await readBoundedJson(req);
+    const validated = validateChatRequest(
+      selectLatestUserMessage(removeClientAuthorizationFields(body)),
+    );
+    // Only the newest validated user message is passed onward. History comes
+    // from server memory; AI SDK control, provider, scope, and arbitrary
+    // metadata fields remain server-owned.
+    params = { messages: validated.messages };
+  } catch (error) {
+    if (error instanceof ChatGuardrailError) return guardrailResponse(error);
+    return guardrailResponse(
+      new ChatGuardrailError(
+        "invalid_request",
+        "The chat request body is invalid.",
+        400,
+      ),
+    );
+  }
+
   const mastra = await loadMastra();
   try {
     await assertStoredThreadOwnership(
@@ -284,26 +376,6 @@ export async function POST(req: Request) {
     throw error;
   }
 
-  let params: JsonRecord;
-  try {
-    const body = await req.json();
-    const validated = validateChatRequest(
-      removeClientAuthorizationFields(body),
-    );
-    // Only the validated message envelope is passed onward. AI SDK control,
-    // provider, scope, and arbitrary metadata fields remain server-owned.
-    params = { messages: validated.messages };
-  } catch (error) {
-    if (error instanceof ChatGuardrailError) return guardrailResponse(error);
-    return guardrailResponse(
-      new ChatGuardrailError(
-        "invalid_request",
-        "The chat request body is invalid.",
-        400,
-      ),
-    );
-  }
-
   const stream = await handleChatStream({
     mastra,
     agentId: "data-analysis-agent",
@@ -313,19 +385,18 @@ export async function POST(req: Request) {
       messages: compactMessages(params.messages),
       maxSteps: MAX_AGENT_STEPS,
       requestContext: createMastraRequestContext(resolved.permissionContext),
+      // maxOutputTokens is the provider-neutral cap; the OpenRouter provider
+      // maps it to max_tokens. Provider-specific options under another
+      // provider's key are ignored and so cannot enforce a limit here.
       modelSettings: {
         maxRetries: MAX_MODEL_RETRIES,
-      },
-      providerOptions: {
-        openai: {
-          maxCompletionTokens: MAX_COMPLETION_TOKENS,
-        },
+        maxOutputTokens: MAX_OUTPUT_TOKENS,
       },
       memory: {
         thread: resolved.permissionContext.thread.id,
         resource: resolved.permissionContext.resource.id,
         options: {
-          lastMessages: 8,
+          lastMessages: MEMORY_HISTORY_MESSAGES,
         },
       },
     },
@@ -353,9 +424,13 @@ export async function GET(req: Request) {
     throw error;
   }
 
+  const limit = enforceRateLimit(req, resolved, "chat:read");
+  if (!limit.allowed) return rateLimitResponse(limit);
+
   const mastra = await loadMastra();
+  let threadExists: boolean;
   try {
-    await assertStoredThreadOwnership(
+    threadExists = await assertStoredThreadOwnership(
       mastra,
       resolved.permissionContext.thread.id,
       resolved.permissionContext.resource.id,
@@ -370,12 +445,33 @@ export async function GET(req: Request) {
   let response = null;
 
   try {
-    response = await memory?.recall({
-      threadId: resolved.permissionContext.thread.id,
-      resourceId: resolved.permissionContext.resource.id,
-    });
-  } catch {
-    console.log("No previous messages found.");
+    // Recall rejects a thread that has not been stored yet, so a new
+    // conversation is answered with an empty history without calling it.
+    response = threadExists
+      ? await memory?.recall({
+          threadId: resolved.permissionContext.thread.id,
+          resourceId: resolved.permissionContext.resource.id,
+        })
+      : null;
+  } catch (error) {
+    // The thread exists and is owned by the caller, so a failure here is a
+    // storage problem. Report it instead of presenting an empty
+    // conversation, which would look to the user like lost history.
+    console.error(
+      "Chat history could not be loaded",
+      redactSensitiveText(errorText(error)),
+    );
+    return appendAuthCookies(
+      NextResponse.json(
+        {
+          error:
+            "The conversation history could not be loaded. Please try again.",
+        },
+        { status: 503, headers: { "Cache-Control": "no-store" } },
+      ),
+      req,
+      resolved,
+    );
   }
 
   const uiMessages = toAISdkMessages(response?.messages || [], {
@@ -400,6 +496,9 @@ export async function DELETE(request: Request) {
       return unauthorizedResponse(request);
     throw error;
   }
+
+  const limit = enforceRateLimit(request, resolved, "chat:read");
+  if (!limit.allowed) return rateLimitResponse(limit);
 
   const response = NextResponse.json({ success: true });
   return appendAuthCookies(response, request, resolved);

@@ -31,6 +31,7 @@ import {
   resolvePermissionContext,
   type PermissionContext,
 } from "../security/permission-context";
+import { CollectionFixtureError } from "./collection-fixture";
 import {
   fixtureManifestForVersion,
   financeFixtureForVersion,
@@ -138,7 +139,10 @@ function safeCsvPath(file: string): string {
     relativePath.startsWith(`..${pathSeparator()}`) ||
     relativePath === ".."
   ) {
-    throw new Error("Evaluation fixture path escapes the fixture directory.");
+    throw new CollectionFixtureError(
+      "Evaluation fixture path escapes the fixture directory.",
+      "path-escape",
+    );
   }
   return path;
 }
@@ -158,7 +162,10 @@ function registerTaskDataset(
   if (task.fixture.kind === "fixture") {
     const selected = fixtureForVersion(task.fixture.version);
     if (selected.manifest.contentHash !== task.fixture.contentHash) {
-      throw new Error(`Task ${task.taskId} has a fixture checksum mismatch.`);
+      throw new CollectionFixtureError(
+        `Task ${task.taskId} has a fixture checksum mismatch.`,
+        "checksum-mismatch",
+      );
     }
     return registerFinanceFixture(
       permissionContext,
@@ -172,7 +179,10 @@ function registerTaskDataset(
     .update(bytes)
     .digest("hex")}`;
   if (contentHash !== task.fixture.contentHash) {
-    throw new Error(`Task ${task.taskId} has a CSV checksum mismatch.`);
+    throw new CollectionFixtureError(
+      `Task ${task.taskId} has a CSV checksum mismatch.`,
+      "checksum-mismatch",
+    );
   }
   return registerFinanceCsv(permissionContext, bytes);
 }
@@ -496,7 +506,10 @@ export async function runEvaluationTask(
     const context = evaluationContext();
     const payload = readOnlyFinanceFixtureAdapter(task.fixture.version);
     if (payload.contentHash !== task.fixture.contentHash) {
-      throw new Error(`Task ${task.taskId} has a fixture checksum mismatch.`);
+      throw new CollectionFixtureError(
+        `Task ${task.taskId} has a fixture checksum mismatch.`,
+        "checksum-mismatch",
+      );
     }
     return makeBaselineAdapterRecord({
       manifest,

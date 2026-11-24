@@ -118,13 +118,17 @@ describe("POST /api/chat", () => {
   });
 
   it("returns a response", async () => {
-    const req = makeRequest("POST", { body: { messages: [] } });
+    const req = makeRequest("POST", {
+      body: { messages: [{ role: "user", content: "Analyze AAPL." }] },
+    });
     const res = await POST(req);
     expect(res).toBeInstanceOf(Response);
   });
 
   it("sets a thread_id cookie in the response", async () => {
-    const req = makeRequest("POST", { body: { messages: [] } });
+    const req = makeRequest("POST", {
+      body: { messages: [{ role: "user", content: "Analyze AAPL." }] },
+    });
     const res = await POST(req);
     const cookie = res.headers.get("Set-Cookie") ?? "";
     expect(cookie).toMatch(/thread_id=/);
@@ -134,7 +138,7 @@ describe("POST /api/chat", () => {
     const { handleChatStream } = await import("@mastra/ai-sdk");
     const cookies = await establishCookies();
     const req = makeRequest("POST", {
-      body: { messages: [] },
+      body: { messages: [{ role: "user", content: "Analyze AAPL." }] },
       cookie: cookies,
     });
     await POST(req);
@@ -153,7 +157,9 @@ describe("POST /api/chat", () => {
 
   it("passes a server-controlled resource ID to handleChatStream", async () => {
     const { handleChatStream } = await import("@mastra/ai-sdk");
-    const req = makeRequest("POST", { body: { messages: [] } });
+    const req = makeRequest("POST", {
+      body: { messages: [{ role: "user", content: "Analyze AAPL." }] },
+    });
     await POST(req);
 
     const call = (handleChatStream as ReturnType<typeof vi.fn>).mock
@@ -171,7 +177,7 @@ describe("POST /api/chat", () => {
     vi.clearAllMocks();
     const req = makeRequest("POST", {
       body: {
-        messages: [],
+        messages: [{ role: "user", content: "Analyze AAPL." }],
         agentId: "attacker-agent",
         resourceId: "attacker-resource",
         tenantId: "attacker-tenant",
@@ -195,7 +201,9 @@ describe("POST /api/chat", () => {
   });
 
   it("sets HttpOnly signed cookies with a bounded expiry", async () => {
-    const req = makeRequest("POST", { body: { messages: [] } });
+    const req = makeRequest("POST", {
+      body: { messages: [{ role: "user", content: "Analyze AAPL." }] },
+    });
     const res = await POST(req);
     const cookie = res.headers.get("Set-Cookie") ?? "";
     expect(cookie).toContain("HttpOnly");
@@ -208,7 +216,7 @@ describe("thread ID cookie parsing", () => {
     const { handleChatStream } = await import("@mastra/ai-sdk");
     vi.clearAllMocks();
     const req = makeRequest("POST", {
-      body: { messages: [] },
+      body: { messages: [{ role: "user", content: "Analyze AAPL." }] },
       cookie: "other_cookie=abc; thread_id=client-controlled-id; another=xyz",
     });
     const response = await POST(req);

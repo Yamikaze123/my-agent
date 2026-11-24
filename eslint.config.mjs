@@ -14,7 +14,9 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
-    "src/components/**",
+    // Vendored component libraries; hand-written components are linted.
+    "src/components/ai-elements/**",
+    "src/components/ui/**",
   ]),
 ]);
 

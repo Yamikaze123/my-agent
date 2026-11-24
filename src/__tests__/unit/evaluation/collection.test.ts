@@ -29,6 +29,7 @@ import {
   writeImmutableCollectionBatch,
   writeImmutableCollectionManifest,
 } from "@/mastra/evaluation/measurement-record";
+import { connectionResetError, scriptedAgent } from "./mock-model-agent";
 
 const SOURCE_COMMIT = "a".repeat(40);
 
@@ -395,37 +396,17 @@ describe("Collection boundary", () => {
 
   it("retries transient network failures and records sanitized retry details", async () => {
     const request = providerRequest();
-    const networkError = Object.assign(new Error("secret response body"), {
-      cause: Object.assign(new Error("socket reset"), {
-        code: "ECONNRESET",
-      }),
-    });
-    let calls = 0;
-    const fakeAgent = {
-      generate: async () => {
-        calls += 1;
-        if (calls === 1) {
-          return {
-            text: "",
-            error: networkError,
-            totalUsage: { inputTokens: 0, outputTokens: 0 },
-            steps: [],
-            toolCalls: [],
-          };
-        }
-        return {
-          text: "Completed.",
-          error: undefined,
-          totalUsage: { inputTokens: 12, outputTokens: 8 },
-          steps: [{}],
-          toolCalls: [],
-          traceId: "trace-after-retry",
-        };
-      },
-    } as unknown as Agent;
+    // A real Mastra Agent on a scripted model: Mastra reports the failed
+    // first model call as a finished step (finishReason "error") and rejects
+    // generate(). A hand-written double returning `steps: []` hid that, and
+    // with it the fact that retries never fired.
+    const { agent, modelCalls } = scriptedAgent([
+      { error: connectionResetError("secret response body") },
+      { text: "Completed." },
+    ]);
 
     const record = await runMastraProviderTask({
-      agent: fakeAgent,
+      agent,
       request,
       permissionContext: resolvePermissionContext(
         new Request("http://localhost/evaluation/provider-retry"),
@@ -433,10 +414,11 @@ describe("Collection boundary", () => {
       retryPolicy: { maxRetries: 2, baseDelayMs: 0, maxDelayMs: 0 },
     });
 
-    expect(calls).toBe(2);
+    expect(modelCalls()).toBe(2);
     expect(record.status).toBe("completed");
     expect(record.counts.retries).toBe(1);
     expect(record.retryDiagnostics).toEqual([{ code: "connection" }]);
+    expect(record.usage.modelCalls).toBe(1);
     expect(JSON.stringify(record)).not.toContain("secret response body");
   });
 

@@ -10,7 +10,7 @@ An AI-powered data analysis assistant built with [Next.js](https://nextjs.org), 
 - **Server-scoped chat memory** — each browser receives a signed server-issued session and resource, with thread cookies cryptographically bound to that scope before Mastra memory is accessed.
 - **Governed finance profile/quality path** — owner-scoped fixture/CSV datasets can be profiled and checked by a registered deterministic Mastra workflow before metric execution.
 - **Measurement-ready evaluation harness** — versioned baseline/governed/ablation manifests, held-out finance tasks, deterministic scoring, and an offline schema-valid smoke run.
-- **Vercel-ready** — deploys to Vercel with no extra infrastructure beyond E2B and a PostgreSQL database.
+- **Single-instance deployment** — runs as one Node.js server process with E2B and a PostgreSQL database. Uploaded datasets, the sandbox concurrency cap, and request rate limits are held in process memory (see [Deployment notes](#deployment-notes)), so the app is not yet suited to serverless or multi-instance hosting.
 
 ## Prerequisites
 
@@ -101,6 +101,13 @@ src/
 │       └── run-python-code.ts      # Tool that executes Python in E2B cloud sandbox
 └── components/               # UI components (conversation, messages, tools, etc.)
 ```
+
+## Deployment notes
+
+- **Process-local state.** The dataset catalog (`src/mastra/datasets/catalog.ts`), the Python sandbox concurrency counter, and the request rate limiter (`src/mastra/security/rate-limit.ts`) live in the memory of one server process. Datasets are lost on restart and are not visible to other instances; on a serverless or multi-instance host an upload handled by one instance cannot be analyzed by another, and each instance enforces its own limits. Run a single long-lived instance, or move this state to shared storage first. Chat history is the exception: it is stored in PostgreSQL.
+- **Request limits.** Every API action is limited per anonymous session and per client address, and issuing new sessions is limited per address, so dropping the cookie does not reset an allowance for free. The client address is read from `X-Forwarded-For`, so deploy behind a proxy that sets it and strips client-supplied values.
+- **Identity.** Sessions are anonymous and server-issued. A production deployment needs an authenticated identity provider in front of the same server-side ownership checks.
+- **Response headers.** `next.config.ts` sets baseline security headers. A full Content-Security-Policy is not configured yet.
 
 ## Available Scripts
 

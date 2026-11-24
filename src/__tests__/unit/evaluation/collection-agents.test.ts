@@ -2,7 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.stubEnv("OPENROUTER_API_KEY", "test-api-key");
 
-const { collectionAgents } = await import("@/mastra/evaluation/agents");
+const { COLLECTION_MODEL, evaluationAgentsEnabled, getCollectionAgents } =
+  await import("@/mastra/evaluation/agents");
+const { measurementManifest } = await import("@/mastra/evaluation/runner");
+const collectionAgents = getCollectionAgents();
 
 describe("collection agents", () => {
   it("exposes one distinct agent for each frozen variant", () => {
@@ -17,6 +20,28 @@ describe("collection agents", () => {
     expect(
       new Set(Object.values(collectionAgents).map((agent) => agent.id)),
     ).toHaveLength(3);
+  });
+
+  it("builds the agents once and runs the model named by the manifest", async () => {
+    expect(getCollectionAgents()).toBe(collectionAgents);
+    expect(measurementManifest.model.model).toBe(COLLECTION_MODEL);
+    for (const agent of Object.values(collectionAgents)) {
+      expect((await agent.getModel()).modelId).toBe(COLLECTION_MODEL);
+    }
+  });
+
+  it("registers evaluation agents only behind an explicit flag", () => {
+    expect(evaluationAgentsEnabled({})).toBe(false);
+    expect(evaluationAgentsEnabled({ NODE_ENV: "development" })).toBe(false);
+    expect(
+      evaluationAgentsEnabled({ EVALUATION_AGENTS_ENABLED: "false" }),
+    ).toBe(false);
+    expect(evaluationAgentsEnabled({ EVALUATION_AGENTS_ENABLED: "true" })).toBe(
+      true,
+    );
+    expect(evaluationAgentsEnabled({ EVALUATION_AGENTS_ENABLED: "1" })).toBe(
+      true,
+    );
   });
 
   it("keeps baseline instructions separate from governed workflow instructions", async () => {

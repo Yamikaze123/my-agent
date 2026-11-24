@@ -18,6 +18,7 @@ import {
   calculateFinanceMetric,
   FinanceMetricDataAvailabilityError,
   getFinanceMetricDefinition,
+  inferSeriesFrequency,
   MetricCalculationError,
 } from "./finance-metrics";
 
@@ -135,14 +136,31 @@ function groupByTicker(
   return groups;
 }
 
+// States the frequency found in the selected observations instead of a fixed
+// label, and for an annualized metric the factor that was actually applied.
+function frequencyAssumption(
+  definition: ReturnType<typeof getFinanceMetricDefinition>,
+  rows: readonly { date: string }[],
+): string {
+  const frequency = inferSeriesFrequency(rows);
+  if (!frequency) {
+    return "Observation frequency: irregular; the spacing matches no standard frequency.";
+  }
+  const basis = `Observation frequency: ${frequency.frequency}, inferred from a typical gap of ${frequency.typicalGapDays} calendar ${frequency.typicalGapDays === 1 ? "day" : "days"}`;
+  return definition.annualization === "sqrt-periods-per-year"
+    ? `${basis}; annualized with sqrt(${frequency.periodsPerYear}).`
+    : `${basis}.`;
+}
+
 function metricAssumptions(
   input: FinanceMetricCalculationInput,
   definition: ReturnType<typeof getFinanceMetricDefinition>,
   priceFieldName: string,
+  rows: readonly { date: string }[],
 ): string[] {
   const assumptions = [
     `Formula: ${definition.formula}`,
-    `Time grain: ${definition.timeGrain}.`,
+    frequencyAssumption(definition, rows),
     `The calculation uses the registered finance price field ${priceFieldName} and the dataset's stored observations.`,
   ];
 
@@ -182,11 +200,6 @@ function calculateCatalogFinanceMetricsInternal(
   const priceRows = toPriceRows(input);
   const selectedRows = filterRows(priceRows.rows, input.request);
   const groups = groupByTicker(selectedRows);
-  const assumptions = metricAssumptions(
-    input,
-    definition,
-    priceRows.priceFieldName,
-  );
   const qualityStatus = input.qualityReport?.status;
 
   return [...groups.keys()].sort().map((ticker) => {
@@ -206,6 +219,15 @@ function calculateCatalogFinanceMetricsInternal(
       }
       throw error;
     }
+
+    // Frequency is a property of each ticker's series, so the assumptions
+    // are built per ticker rather than once for the whole selection.
+    const assumptions = metricAssumptions(
+      input,
+      definition,
+      priceRows.priceFieldName,
+      rows,
+    );
 
     return metricResultSchema.parse({
       metricId: definition.metricId,

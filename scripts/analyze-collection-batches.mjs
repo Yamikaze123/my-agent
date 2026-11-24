@@ -1,7 +1,17 @@
 #!/usr/bin/env node
 
 import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { dirname, isAbsolute, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+// Manifest result locations and the default pairs are repository-relative,
+// so they are resolved against the repository root, not the caller's cwd.
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+
+/** Resolve a repository-relative path; a path given on the CLI may also be relative to cwd. */
+function repoPath(filePath) {
+  return isAbsolute(filePath) ? filePath : resolve(repoRoot, filePath);
+}
 
 const defaultPairs = [
   [
@@ -21,13 +31,18 @@ if (args.length !== 0 && args.length !== 4) {
   );
 }
 
-const pairs =
+// Command-line paths follow shell convention and are relative to cwd.
+const pairs = (
   args.length === 4
     ? [
-        [args[0], args[1]],
-        [args[2], args[3]],
+        [resolve(args[0]), resolve(args[1])],
+        [resolve(args[2]), resolve(args[3])],
       ]
-    : defaultPairs;
+    : defaultPairs
+).map(([manifestPath, resultPath]) => [
+  repoPath(manifestPath),
+  repoPath(resultPath),
+]);
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -74,16 +89,16 @@ function summarizeScore(records, key) {
 }
 
 async function loadBatch([manifestPath, resultPath]) {
-  const manifest = JSON.parse(await readFile(resolve(manifestPath), "utf8"));
-  const batch = JSON.parse(await readFile(resolve(resultPath), "utf8"));
-  const normalizedResultLocation = resolve(manifest.collection.resultLocation);
+  const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+  const batch = JSON.parse(await readFile(resultPath, "utf8"));
+  const normalizedResultLocation = repoPath(manifest.collection.resultLocation);
 
   assert(
     manifest.measurementBatchId === batch.batchId,
     `Batch ID mismatch for ${resultPath}`,
   );
   assert(
-    normalizedResultLocation === resolve(resultPath),
+    normalizedResultLocation === resultPath,
     `Manifest result path mismatch for ${resultPath}`,
   );
   assert(Array.isArray(batch.records), `No records array in ${resultPath}`);
@@ -123,7 +138,10 @@ async function loadBatch([manifestPath, resultPath]) {
       planned: rows.length,
       completed: completed.length,
       failed: failed.length,
-      successRatePercent: round((completed.length / rows.length) * 100),
+      // A variant with no planned rows has no success rate; null, not NaN.
+      successRatePercent: rows.length
+        ? round((completed.length / rows.length) * 100)
+        : null,
       latencyMs: {
         p50: percentile(latencies, 0.5),
         p95: percentile(latencies, 0.95),
@@ -235,15 +253,13 @@ assert(
 );
 
 const firstByKey = new Map(
-  JSON.parse(await readFile(resolve(first.resultPath), "utf8")).records.map(
-    (record) => [
-      `${record.taskId}|${record.variant}|${record.repetition}`,
-      record,
-    ],
-  ),
+  JSON.parse(await readFile(first.resultPath, "utf8")).records.map((record) => [
+    `${record.taskId}|${record.variant}|${record.repetition}`,
+    record,
+  ]),
 );
 const secondRecords = JSON.parse(
-  await readFile(resolve(second.resultPath), "utf8"),
+  await readFile(second.resultPath, "utf8"),
 ).records;
 const pairedRows = secondRecords.map((record) => {
   const key = `${record.taskId}|${record.variant}|${record.repetition}`;

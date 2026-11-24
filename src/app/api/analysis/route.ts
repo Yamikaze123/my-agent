@@ -14,6 +14,10 @@ import {
   sessionCookieName,
   threadCookieName,
 } from "@/mastra/security/permission-context";
+import {
+  enforceRateLimit,
+  rateLimitResponse,
+} from "@/mastra/security/rate-limit";
 import { runFinanceAnalysisWorkflow } from "@/mastra/workflows/finance-analysis";
 
 export const runtime = "nodejs";
@@ -178,6 +182,9 @@ export async function POST(request: Request): Promise<Response> {
   const authorization = authorizeRequest(request);
   if ("response" in authorization) return authorization.response;
   const { resolved } = authorization;
+
+  const limit = enforceRateLimit(request, resolved, "analysis:run");
+  if (!limit.allowed) return rateLimitResponse(limit);
 
   try {
     const bodyBytes = await readBoundedBody(request);

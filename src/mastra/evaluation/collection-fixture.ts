@@ -24,6 +24,21 @@ import type { PermissionContext } from "../security/permission-context";
 
 export const COLLECTION_TASK_CONTEXT_KEY = "evaluationCollectionTask";
 
+/**
+ * A checked-in fixture could not be bound to a task: its bytes do not match
+ * the frozen checksum, or the task names a path outside the fixture
+ * directory. This is a data/harness failure and never a provider result.
+ */
+export class CollectionFixtureError extends Error {
+  constructor(
+    message: string,
+    readonly code: "checksum-mismatch" | "path-escape" | "missing-fixture",
+  ) {
+    super(message);
+    this.name = "CollectionFixtureError";
+  }
+}
+
 const collectionTaskContextSchema = z
   .object({
     taskId: z.string().min(1).max(128),
@@ -95,7 +110,10 @@ function safeCsvPath(rootDir: string, file: string): string {
     relativePath === ".." ||
     relativePath.startsWith(`..${sep}`)
   ) {
-    throw new Error("Evaluation fixture path escapes the fixture directory.");
+    throw new CollectionFixtureError(
+      "Evaluation fixture path escapes the fixture directory.",
+      "path-escape",
+    );
   }
   // Unit callers may place only the manifests/tasks in a temporary root while
   // reusing the checked-in fixture bytes. Preserve the same path restriction
@@ -122,7 +140,10 @@ function contextFromTask(
   rootDir = process.cwd(),
 ): CollectionTaskContext {
   if (!task.fixture) {
-    throw new Error(`Task ${task.taskId} does not define a fixture.`);
+    throw new CollectionFixtureError(
+      `Task ${task.taskId} does not define a fixture.`,
+      "missing-fixture",
+    );
   }
   return collectionTaskContextSchema.parse({
     taskId: task.taskId,
@@ -163,8 +184,9 @@ export function loadCollectionFixture(
   if (context.fixture.kind === "fixture") {
     const payload = readOnlyFinanceFixtureAdapter(context.fixture.version);
     if (payload.contentHash !== context.fixture.contentHash) {
-      throw new Error(
+      throw new CollectionFixtureError(
         `Task ${context.taskId} has a fixture checksum mismatch.`,
+        "checksum-mismatch",
       );
     }
 
@@ -190,7 +212,10 @@ export function loadCollectionFixture(
   );
   const contentHash = csvContentHash(bytes);
   if (contentHash !== context.fixture.contentHash) {
-    throw new Error(`Task ${context.taskId} has a CSV checksum mismatch.`);
+    throw new CollectionFixtureError(
+      `Task ${context.taskId} has a CSV checksum mismatch.`,
+      "checksum-mismatch",
+    );
   }
   const parsed = parseFinanceCsv(bytes);
   return {
@@ -222,7 +247,10 @@ export function registerCollectionTaskDataset(
     const fixture = financeFixtureForVersion(task.fixture.version);
     const manifest = fixtureManifestForVersion(task.fixture.version);
     if (manifest.contentHash !== task.fixture.contentHash) {
-      throw new Error(`Task ${task.taskId} has a fixture checksum mismatch.`);
+      throw new CollectionFixtureError(
+        `Task ${task.taskId} has a fixture checksum mismatch.`,
+        "checksum-mismatch",
+      );
     }
     return registerFinanceFixture(permissionContext, fixture, manifest);
   }
@@ -231,7 +259,10 @@ export function registerCollectionTaskDataset(
     readFileSync(safeCsvPath(rootDir, task.fixture.file)),
   );
   if (csvContentHash(bytes) !== task.fixture.contentHash) {
-    throw new Error(`Task ${task.taskId} has a CSV checksum mismatch.`);
+    throw new CollectionFixtureError(
+      `Task ${task.taskId} has a CSV checksum mismatch.`,
+      "checksum-mismatch",
+    );
   }
   return registerFinanceCsv(permissionContext, bytes);
 }

@@ -15,6 +15,7 @@ import {
   findFinanceFieldIndex,
   getFinanceTableShapeError,
 } from "../finance/field-resolution";
+import { inferObservationFrequency } from "../finance/observation-frequency";
 import { findGuardrailViolation } from "../security/chat-policy";
 
 export const FINANCE_QUALITY_REPORT_VERSION = "v1";
@@ -113,7 +114,7 @@ export const financeQualityRules = Object.freeze([
     ruleId: "missing-period",
     version: "v1",
     condition:
-      "Monthly finance observations do not skip an expected calendar month. A gap is a disclosed metric assumption, not a data-integrity defect (ADR-004).",
+      "Monthly finance observations do not skip an expected calendar month. Applies to series observed monthly; a gap is a disclosed metric assumption, not a data-integrity defect (ADR-004).",
     severity: "warning",
     scope: "row",
     gateBehavior: "warn",
@@ -495,6 +496,12 @@ export function assessFinanceQuality(
       let missingPeriodCount = 0;
       for (const dates of datesByTicker.values()) {
         const uniqueSortedDates = [...new Set(dates)].sort();
+        // The calendar-month check only describes monthly data. A series
+        // clearly observed at another frequency (for example quarterly) would
+        // otherwise report every period as missing months. Series whose
+        // spacing cannot be classified keep the monthly default.
+        const inferred = inferObservationFrequency(uniqueSortedDates);
+        if (inferred && inferred.frequency !== "monthly") continue;
         for (let index = 1; index < uniqueSortedDates.length; index += 1) {
           const gap =
             monthIndex(uniqueSortedDates[index]) -

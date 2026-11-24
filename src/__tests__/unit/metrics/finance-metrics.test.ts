@@ -8,6 +8,7 @@ import {
   financeGoldenFixture,
   financeMetricDefinitions,
   getFinanceMetricDefinition,
+  inferSeriesFrequency,
   type FinanceMetricId,
 } from "@/mastra/metrics/finance-metrics";
 import {
@@ -137,5 +138,71 @@ describe("finance metric pack", () => {
     expect(() => getFinanceMetricDefinition("sharpe-ratio")).toThrow(
       "Unsupported finance metric",
     );
+  });
+
+  describe("volatility annualization by observation frequency", () => {
+    // Alternating +1% / -1% returns: the per-period sample standard deviation
+    // is close to 1%, so the annualized value is close to sqrt(periods) %.
+    function alternatingSeries(dates: string[]) {
+      let close = 100;
+      return dates.map((date, index) => {
+        if (index > 0) close *= index % 2 === 1 ? 1.01 : 0.99;
+        return { ticker: "AAA", date, close };
+      });
+    }
+
+    function weekdays(count: number) {
+      const dates: string[] = [];
+      const cursor = new Date("2025-01-02T00:00:00Z");
+      while (dates.length < count) {
+        const day = cursor.getUTCDay();
+        if (day !== 0 && day !== 6) {
+          dates.push(cursor.toISOString().slice(0, 10));
+        }
+        cursor.setUTCDate(cursor.getUTCDate() + 1);
+      }
+      return dates;
+    }
+
+    function stepped(count: number, stepDays: number) {
+      return Array.from({ length: count }, (_, index) =>
+        new Date(Date.UTC(2025, 0, 3) + index * stepDays * 86_400_000)
+          .toISOString()
+          .slice(0, 10),
+      );
+    }
+
+    it("annualizes daily observations with sqrt(252), not sqrt(12)", () => {
+      const value = calculateAnnualizedVolatility(
+        alternatingSeries(weekdays(121)),
+      );
+      expect(value).toBeGreaterThan(15.5);
+      expect(value).toBeLessThan(16.5);
+    });
+
+    it("annualizes weekly observations with sqrt(52)", () => {
+      const value = calculateAnnualizedVolatility(
+        alternatingSeries(stepped(53, 7)),
+      );
+      expect(value).toBeGreaterThan(7);
+      expect(value).toBeLessThan(7.5);
+    });
+
+    it("keeps sqrt(12) for monthly observations, including gapped ones", () => {
+      expect(inferSeriesFrequency(rowsForTicker("AAPL"))).toMatchObject({
+        frequency: "monthly",
+        periodsPerYear: 12,
+      });
+      expect(inferSeriesFrequency(rowsForTicker("AAPL", "v2"))).toMatchObject({
+        frequency: "monthly",
+        periodsPerYear: 12,
+      });
+    });
+
+    it("rejects a spacing that has no annualization factor", () => {
+      expect(() =>
+        calculateAnnualizedVolatility(alternatingSeries(stepped(12, 14))),
+      ).toThrow(/daily, weekly, monthly, quarterly, or annual/);
+    });
   });
 });

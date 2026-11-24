@@ -42,3 +42,6 @@ next-env.d.ts
 
 # db
 .mastra/
+
+# evaluation collection in progress (removed when the batch file is written)
+*.partial.jsonl

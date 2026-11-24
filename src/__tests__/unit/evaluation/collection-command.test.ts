@@ -1,11 +1,18 @@
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
+import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import type { Agent } from "@mastra/core/agent";
 import { describe, expect, it, vi } from "vitest";
 import {
   environmentManifest,
   heldOutTaskSet,
+  measurementManifest,
 } from "@/mastra/evaluation/runner";
 import {
   createCollectionManifest,
@@ -18,14 +25,18 @@ import {
   type CollectionCommandOptions,
 } from "@/mastra/evaluation/collection-command";
 import {
+  partialCollectionPath,
   readCollectionBatch,
+  readPartialCollectionRecords,
   writeImmutableCollectionManifest,
 } from "@/mastra/evaluation/measurement-record";
 import { resolvePermissionContext } from "@/mastra/security/permission-context";
 
 const SOURCE_COMMIT = "c".repeat(40);
 
-function fakeAgent() {
+const MANIFEST_MODEL = measurementManifest.model.model;
+
+function fakeAgent(modelId = MANIFEST_MODEL) {
   const generate = vi.fn(async () => ({
     text: "I can't help with that request.",
     error: undefined,
@@ -35,7 +46,10 @@ function fakeAgent() {
     traceId: "collection-command-trace",
   }));
   return {
-    agent: { generate } as unknown as Agent,
+    agent: {
+      generate,
+      getModel: async () => ({ modelId }),
+    } as unknown as Agent,
     generate,
   };
 }
@@ -174,6 +188,82 @@ describe("collection command", () => {
     expect(agents.baseline.generate).toHaveBeenCalledTimes(5);
     expect(agents.governed.generate).toHaveBeenCalledTimes(5);
     expect(agents.ablation.generate).toHaveBeenCalledTimes(5);
+  });
+
+  it("removes the partial sidecar once the final batch is written", async () => {
+    const { options } = setupCollectionCommand();
+
+    const result = await runCollectionCommand(options);
+
+    expect(existsSync(result.resultPath)).toBe(true);
+    expect(existsSync(partialCollectionPath(result.resultPath))).toBe(false);
+  });
+
+  it("keeps every completed run in a labelled sidecar when the batch cannot be finalized", async () => {
+    const { options, agents, rootDir } = setupCollectionCommand();
+    const resultPath = join(
+      rootDir,
+      "evaluation/results/collection-command.json",
+    );
+    const partialPath = partialCollectionPath(resultPath);
+    const original = agents.ablation.generate.getMockImplementation()!;
+    let sidecarRecordsDuringRun = -1;
+    agents.ablation.generate.mockImplementation(async () => {
+      // Mid-run, the sidecar already holds the runs that have completed.
+      sidecarRecordsDuringRun =
+        readPartialCollectionRecords(partialPath).records.length;
+      // Another process claims the result path, so the final exclusive write
+      // must fail after every run has completed.
+      if (!existsSync(resultPath)) writeFileSync(resultPath, "{}\n");
+      return original();
+    });
+
+    await expect(runCollectionCommand(options)).rejects.toThrow(
+      /already exists/,
+    );
+
+    expect(sidecarRecordsDuringRun).toBeGreaterThan(0);
+    expect(readFileSync(resultPath, "utf8")).toBe("{}\n");
+    const firstLine = readFileSync(partialPath, "utf8").split("\n")[0];
+    expect(JSON.parse(firstLine)).toMatchObject({
+      kind: "partial-collection-header",
+      batchId: "collection-command-batch",
+    });
+    expect(firstLine).toContain("INCOMPLETE");
+    const recovered = readPartialCollectionRecords(partialPath);
+    expect(recovered.records).toHaveLength(15);
+    expect(recovered.records.map((record) => record.executionOrder)).toEqual(
+      Array.from({ length: 15 }, (_, index) => index + 1),
+    );
+  });
+
+  it("never appends to or replaces a sidecar left by an interrupted run", async () => {
+    const { options, agents, rootDir } = setupCollectionCommand();
+    const partialPath = partialCollectionPath(
+      join(rootDir, "evaluation/results/collection-command.json"),
+    );
+    mkdirSync(dirname(partialPath), { recursive: true });
+    writeFileSync(partialPath, "interrupted\n");
+
+    await expect(runCollectionCommand(options)).rejects.toThrow(
+      /partial collection file/,
+    );
+    expect(readFileSync(partialPath, "utf8")).toBe("interrupted\n");
+    expect(agents.baseline.generate).not.toHaveBeenCalled();
+  });
+
+  it("refuses to collect when an agent runs a different model than the manifest", async () => {
+    const { options, agents } = setupCollectionCommand();
+    const other = fakeAgent("some-other/model");
+
+    await expect(
+      runCollectionCommand({
+        ...options,
+        agents: { ...options.agents, governed: other.agent },
+      }),
+    ).rejects.toThrow(/governed agent runs model some-other\/model/);
+    expect(agents.baseline.generate).not.toHaveBeenCalled();
+    expect(other.generate).not.toHaveBeenCalled();
   });
 
   it("fails before provider calls when a variant agent is missing", async () => {

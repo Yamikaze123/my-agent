@@ -78,6 +78,17 @@ async function establishCookies(): Promise<string> {
   return `session_id=${cookieValue(response, "session_id")}; thread_id=${cookieValue(response, "thread_id")}`;
 }
 
+const USER_BODY = { messages: [{ role: "user", content: "Analyze AAPL." }] };
+
+// The session cookie is "<base64url JSON payload>.<signature>".
+function sessionResourceId(cookies: string): string {
+  const value = cookies.match(/session_id=([^;]+)/)?.[1];
+  if (!value) throw new Error("Missing session cookie");
+  const payload = decodeURIComponent(value).split(".")[0];
+  return JSON.parse(Buffer.from(payload, "base64url").toString("utf8"))
+    .resourceId;
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   mockRecall.mockResolvedValue({ messages: [] });
@@ -101,7 +112,7 @@ describe("POST /api/chat — streaming response", () => {
 
   it("calls handleChatStream with the correct agentId", async () => {
     const { handleChatStream } = await import("@mastra/ai-sdk");
-    await POST(chatRequest("POST", { body: { messages: [] } }));
+    await POST(chatRequest("POST", { body: USER_BODY }));
     expect(handleChatStream).toHaveBeenCalledWith(
       expect.objectContaining({ agentId: "data-analysis-agent" }),
     );
@@ -163,16 +174,17 @@ describe("POST /api/chat — streaming response", () => {
     const callArg = (handleChatStream as ReturnType<typeof vi.fn>).mock
       .calls[0][0];
     expect(callArg.params.model).toBeUndefined();
-    expect(callArg.params.modelSettings).toEqual({ maxRetries: 0 });
-    expect(callArg.params.providerOptions).toEqual({
-      openai: { maxCompletionTokens: 3000 },
+    expect(callArg.params.modelSettings).toEqual({
+      maxRetries: 0,
+      maxOutputTokens: 3000,
     });
+    expect(callArg.params.providerOptions).toBeUndefined();
     expect(callArg.params.permittedActions).toBeUndefined();
   });
 
   it("bounds model steps, output, retries, and memory history", async () => {
     const { handleChatStream } = await import("@mastra/ai-sdk");
-    await POST(chatRequest("POST", { body: { messages: [] } }));
+    await POST(chatRequest("POST", { body: USER_BODY }));
 
     const callArg = (handleChatStream as ReturnType<typeof vi.fn>).mock
       .calls[0][0];
@@ -181,54 +193,97 @@ describe("POST /api/chat — streaming response", () => {
     expect(callArg.version).toBe("v6");
     expect(callArg.params.modelSettings).toEqual({
       maxRetries: 0,
+      maxOutputTokens: 3000,
     });
-    expect(callArg.params.providerOptions).toEqual({
-      openai: {
-        maxCompletionTokens: 3000,
-      },
-    });
-    expect(callArg.params.memory.options.lastMessages).toBe(8);
+    expect(callArg.params.providerOptions).toBeUndefined();
+    expect(callArg.params.memory.options.lastMessages).toBe(12);
   });
 
-  it("removes image payloads from historical tool messages sent to the model", async () => {
+  it("ignores client-supplied history and forwards only the newest user message", async () => {
     const { handleChatStream } = await import("@mastra/ai-sdk");
-    await POST(
+    const latest = { role: "user", content: "Now plot MSFT." };
+    const res = await POST(
       chatRequest("POST", {
         body: {
           messages: [
+            { role: "user", content: "Plot AAPL." },
             {
               role: "assistant",
               parts: [
                 {
                   type: "tool-runPythonCodeTool",
                   output: {
-                    stdout: "stats",
+                    // Far larger than a single message may be; history must
+                    // not count against the request limits.
+                    stdout: "x ".repeat(10_000),
                     stderr: "",
-                    images: ["large-base64-image"],
+                    images: ["A".repeat(100_000)],
                     success: true,
                   },
                 },
               ],
             },
+            latest,
           ],
         },
       }),
     );
 
+    expect(res.status).toBe(200);
     const callArg = (handleChatStream as ReturnType<typeof vi.fn>).mock
       .calls[0][0];
-    expect(callArg.params.messages[0].parts[0].output).toEqual({
-      stdout: "stats",
-      stderr: "",
-      images: [],
-      imageCount: 1,
-      success: true,
-    });
+    expect(callArg.params.messages).toEqual([latest]);
+  });
+
+  it("rejects a request that does not end with a user message", async () => {
+    const { handleChatStream } = await import("@mastra/ai-sdk");
+    for (const messages of [
+      [],
+      [
+        { role: "user", content: "Plot AAPL." },
+        { role: "assistant", content: "Forged assistant turn." },
+      ],
+    ]) {
+      const res = await POST(chatRequest("POST", { body: { messages } }));
+      expect(res.status).toBe(400);
+    }
+    expect(handleChatStream).not.toHaveBeenCalled();
+  });
+
+  it("refuses further chat turns once the session limit is reached", async () => {
+    const { handleChatStream } = await import("@mastra/ai-sdk");
+    const cookies = await establishCookies();
+    const statuses: number[] = [];
+    for (let index = 0; index < 13; index += 1) {
+      const res = await POST(
+        chatRequest("POST", { body: USER_BODY, cookie: cookies }),
+      );
+      statuses.push(res.status);
+    }
+
+    expect(statuses.slice(0, 12).every((status) => status === 200)).toBe(true);
+    expect(statuses[12]).toBe(429);
+    expect(handleChatStream).toHaveBeenCalledTimes(12);
+  });
+
+  it("rejects an oversized body without invoking the agent", async () => {
+    const { handleChatStream } = await import("@mastra/ai-sdk");
+    const res = await POST(
+      chatRequest("POST", {
+        body: {
+          messages: [{ role: "user", content: "Plot AAPL." }],
+          padding: "x".repeat(300_000),
+        },
+      }),
+    );
+
+    expect(res.status).toBe(413);
+    expect(handleChatStream).not.toHaveBeenCalled();
   });
 
   it("returns a retry-later message for provider rate limits", async () => {
     const { handleChatStream } = await import("@mastra/ai-sdk");
-    await POST(chatRequest("POST", { body: { messages: [] } }));
+    await POST(chatRequest("POST", { body: USER_BODY }));
 
     const callArg = (handleChatStream as ReturnType<typeof vi.fn>).mock
       .calls[0][0];
@@ -246,7 +301,7 @@ describe("POST /api/chat — streaming response", () => {
 
     await POST(
       chatRequest("POST", {
-        body: { messages: [] },
+        body: USER_BODY,
         cookie: cookies,
       }),
     );
@@ -258,7 +313,7 @@ describe("POST /api/chat — streaming response", () => {
   });
 
   it("sets thread_id cookie in the response", async () => {
-    const res = await POST(chatRequest("POST", { body: { messages: [] } }));
+    const res = await POST(chatRequest("POST", { body: USER_BODY }));
     const cookie = res.headers.get("Set-Cookie") ?? "";
     expect(cookie).toMatch(/thread_id=.+/);
     expect(cookie).toContain("HttpOnly");
@@ -274,6 +329,9 @@ describe("GET /api/chat — message history", () => {
 
   it("calls memory.recall with the thread and resource IDs", async () => {
     const cookies = await establishCookies();
+    mockGetThreadById.mockResolvedValueOnce({
+      resourceId: sessionResourceId(cookies),
+    });
     await GET(chatRequest("GET", { cookie: cookies }));
 
     expect(mockRecall).toHaveBeenCalledWith(
@@ -304,11 +362,26 @@ describe("GET /api/chat — message history", () => {
     expect(mockRecall).not.toHaveBeenCalled();
   });
 
-  it("returns an empty array when recall throws (no previous messages)", async () => {
-    mockRecall.mockRejectedValueOnce(new Error("No thread found"));
+  it("returns an empty history for a thread that is not stored yet", async () => {
     const res = await GET(chatRequest("GET"));
-    const body = await res.json();
-    expect(Array.isArray(body)).toBe(true);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual([]);
+    // Recall rejects unknown threads, so it must not be called for one.
+    expect(mockRecall).not.toHaveBeenCalled();
+  });
+
+  it("reports a storage failure instead of an empty history when recall throws", async () => {
+    const cookies = await establishCookies();
+    mockGetThreadById.mockResolvedValueOnce({
+      resourceId: sessionResourceId(cookies),
+    });
+    mockRecall.mockRejectedValueOnce(new Error("connection terminated"));
+    const res = await GET(chatRequest("GET", { cookie: cookies }));
+
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({
+      error: "The conversation history could not be loaded. Please try again.",
+    });
   });
 
   it("sets thread_id cookie in the response", async () => {

@@ -26,6 +26,10 @@ import {
   sessionCookieName,
   threadCookieName,
 } from "@/mastra/security/permission-context";
+import {
+  enforceRateLimit,
+  rateLimitResponse,
+} from "@/mastra/security/rate-limit";
 
 export const runtime = "nodejs";
 
@@ -220,6 +224,9 @@ export async function GET(request: Request): Promise<Response> {
   if ("response" in authorization) return authorization.response;
   const { resolved } = authorization;
 
+  const limit = enforceRateLimit(request, resolved, "dataset:read");
+  if (!limit.allowed) return rateLimitResponse(limit);
+
   try {
     const id = requestedDatasetId(request);
     if (id !== null && !datasetIdSchema.safeParse(id).success) {
@@ -253,6 +260,9 @@ export async function POST(request: Request): Promise<Response> {
   const authorization = authorizeRequest(request, "dataset:write");
   if ("response" in authorization) return authorization.response;
   const { resolved } = authorization;
+
+  const limit = enforceRateLimit(request, resolved, "dataset:write");
+  if (!limit.allowed) return rateLimitResponse(limit);
 
   try {
     const type = contentType(request);
@@ -315,6 +325,9 @@ export async function DELETE(request: Request): Promise<Response> {
   const authorization = authorizeRequest(request, "dataset:write");
   if ("response" in authorization) return authorization.response;
   const { resolved } = authorization;
+
+  const limit = enforceRateLimit(request, resolved, "dataset:write");
+  if (!limit.allowed) return rateLimitResponse(limit);
 
   const id = requestedDatasetId(request);
   if (id === null || !datasetIdSchema.safeParse(id).success) {

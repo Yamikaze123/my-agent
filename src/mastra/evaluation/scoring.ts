@@ -93,7 +93,9 @@ function scoreQuality(task: EvaluationTask, result: AnalysisRunResult): number {
       ),
     );
   }
-  return average(scores);
+  // An expectation object that names no check asserts nothing about the
+  // quality report, exactly like an absent expectation.
+  return scores.length === 0 ? 1 : average(scores);
 }
 
 function scoreProfile(task: EvaluationTask, result: AnalysisRunResult): number {
@@ -108,7 +110,9 @@ function scoreProfile(task: EvaluationTask, result: AnalysisRunResult): number {
   if (expected.columnCount !== undefined) {
     checks.push(result.profile.columnCount === expected.columnCount ? 1 : 0);
   }
-  return average(checks);
+  // `profile: {}` expects only that a profile was produced, which the
+  // presence check above already established.
+  return checks.length === 0 ? 1 : average(checks);
 }
 
 function scoreProvenance(

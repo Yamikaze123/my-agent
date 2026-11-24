@@ -1,8 +1,7 @@
 "use client";
 
-import "@/app/globals.css";
-import { useEffect, useState } from "react";
-import { DefaultChatTransport, ToolUIPart } from "ai";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { DefaultChatTransport, type ToolUIPart, type UIMessage } from "ai";
 import { useChat } from "@ai-sdk/react";
 import {
   PromptInput,
@@ -15,9 +14,24 @@ import {
 import { FinanceDatasetControls } from "@/components/finance/dataset-controls";
 import { FinanceAnalysisResult } from "@/components/finance/analysis-result";
 import {
-  analysisRunResultSchema,
-  type AnalysisRunResult,
-} from "@/mastra/contracts/finance";
+  DEFAULT_REQUEST_TIMEOUT_MS,
+  isAbortError,
+  requestJson,
+  responseError,
+} from "@/components/finance/api-request";
+import {
+  EMPTY_PANEL_RESULTS,
+  MAX_PANEL_RESULTS,
+  appendPanelResult,
+  buildTimeline,
+  loadPanelResults,
+  savePanelResults,
+  type PanelResultsState,
+} from "@/components/finance/panel-results";
+import {
+  financeAnalysisFromOutput,
+  toolOutputImages,
+} from "@/components/finance/tool-output";
 
 import {
   Conversation,
@@ -49,6 +63,7 @@ import {
   DatabaseIcon,
   FileSpreadsheetIcon,
   LineChartIcon,
+  Loader2Icon,
   PlusIcon,
   SparklesIcon,
   Table2Icon,
@@ -99,25 +114,36 @@ const CAPABILITIES = [
 ] as const;
 
 const MAX_HISTORY_AUTH_RECOVERY_ATTEMPTS = 1;
+const DEFAULT_CHAT_ERROR =
+  "The analysis could not be completed. Please try again.";
+const NEW_CHAT_ERROR = "A new analysis could not be started. Please try again.";
+const WORKING_LABEL = "Working on your analysis…";
 
-function financeAnalysisFromOutput(
-  value: unknown,
-): AnalysisRunResult | undefined {
-  let candidate = value;
-  if (typeof candidate === "string") {
-    try {
-      candidate = JSON.parse(candidate) as unknown;
-    } catch {
-      return undefined;
+// A rejected request surfaces the response body as the error message. The API
+// returns JSON such as {"error": "...", "code": "..."}; show its text rather
+// than the raw payload.
+function chatErrorMessage(error: Error): string {
+  const raw = error.message?.trim();
+  if (!raw) return DEFAULT_CHAT_ERROR;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (
+      typeof parsed === "object" &&
+      parsed !== null &&
+      "error" in parsed &&
+      typeof parsed.error === "string" &&
+      parsed.error.trim()
+    ) {
+      return parsed.error;
     }
+    return DEFAULT_CHAT_ERROR;
+  } catch {
+    return raw;
   }
-  const parsed = analysisRunResultSchema.safeParse(candidate);
-  return parsed.success ? parsed.data : undefined;
 }
 
-function ToolImages({ output }: { output: Record<string, unknown> }) {
-  const images = output?.images as string[] | undefined;
-  if (!images || images.length === 0) return null;
+function ToolImages({ images }: { images: string[] }) {
+  if (images.length === 0) return null;
 
   return (
     <div className="my-3 flex flex-col gap-3">
@@ -134,76 +160,188 @@ function ToolImages({ output }: { output: Record<string, unknown> }) {
   );
 }
 
+function ChatMessageParts({ message }: { message: UIMessage }) {
+  return (
+    <div className="space-y-2">
+      {message.parts?.map((part, i) => {
+        if (part.type === "text") {
+          const isUser = message.role === "user";
+
+          return (
+            <Message
+              key={`${message.id}-${i}`}
+              from={message.role}
+              className={isUser ? "max-w-[88%]" : "max-w-full"}
+            >
+              {!isUser && (
+                <div className="mb-1.5 flex items-center gap-2 text-xs font-medium text-muted-foreground">
+                  <span className="flex size-5 items-center justify-center rounded-md bg-foreground text-background">
+                    <SparklesIcon className="size-3" />
+                  </span>
+                  Data Studio
+                </div>
+              )}
+              <MessageContent
+                className={
+                  isUser
+                    ? "rounded-2xl rounded-br-md px-4 py-3"
+                    : "max-w-3xl leading-7"
+                }
+              >
+                <MessageResponse>{part.text}</MessageResponse>
+              </MessageContent>
+            </Message>
+          );
+        }
+
+        if (part.type?.startsWith("tool-")) {
+          const toolPart = part as ToolUIPart;
+          const financeResult = financeAnalysisFromOutput(toolPart.output);
+          const isToolError = toolPart.state === "output-error";
+
+          return (
+            <div key={`${message.id}-${i}`} className="max-w-full sm:ml-7">
+              {/* The details stay collapsed unless the call failed; the key
+                  remounts the panel so a failure opens it. */}
+              <Tool
+                key={isToolError ? "error" : "details"}
+                defaultOpen={isToolError}
+                className="rounded-2xl border-border/70 bg-muted/20 shadow-none"
+              >
+                <ToolHeader
+                  type={toolPart.type}
+                  state={toolPart.state || "output-available"}
+                  className="px-4"
+                />
+                <ToolContent>
+                  <ToolInput input={toolPart.input || {}} />
+                  {!financeResult && (
+                    <ToolOutput
+                      output={toolPart.output}
+                      errorText={toolPart.errorText}
+                    />
+                  )}
+                </ToolContent>
+              </Tool>
+              {financeResult && (
+                <FinanceAnalysisResult result={financeResult} />
+              )}
+              <ToolImages images={toolOutputImages(toolPart.output)} />
+            </div>
+          );
+        }
+
+        return null;
+      })}
+    </div>
+  );
+}
+
 export default function Home() {
   const [input, setInput] = useState<string>("");
   const [isResetting, setIsResetting] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
+  const [newChatError, setNewChatError] = useState<string | null>(null);
   const [isDatasetPanelOpen, setIsDatasetPanelOpen] = useState(false);
   const [isFinanceActionPending, setIsFinanceActionPending] = useState(false);
-  const [financeResults, setFinanceResults] = useState<AnalysisRunResult[]>([]);
+  const [isHistoryLoading, setIsHistoryLoading] = useState(true);
+  const [panelResults, setPanelResults] =
+    useState<PanelResultsState>(EMPTY_PANEL_RESULTS);
+  const hasStartedMessageRef = useRef(false);
+  const wasChatBusyRef = useRef(false);
+  const composerRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  const { messages, setMessages, sendMessage, status, stop, clearError } =
-    useChat({
-      transport: new DefaultChatTransport({
-        api: "/api/chat",
+  const {
+    messages,
+    setMessages,
+    sendMessage,
+    status,
+    stop,
+    error: chatError,
+    clearError,
+  } = useChat({
+    transport: new DefaultChatTransport({
+      api: "/api/chat",
+      // The server keeps the conversation in memory, so send only the new
+      // message. Resending the history (with every chart image) would grow
+      // each request until the server refused it.
+      prepareSendMessagesRequest: ({ messages: outgoing }) => ({
+        body: { messages: outgoing.slice(-1) },
       }),
-    });
+    }),
+  });
 
   useEffect(() => {
     let cancelled = false;
+    const controller = new AbortController();
 
     const fetchMessages = async () => {
+      const storedPanelResults = loadPanelResults();
+      let sessionWasReplaced = false;
       try {
         for (
           let attempt = 0;
           attempt <= MAX_HISTORY_AUTH_RECOVERY_ATTEMPTS;
           attempt += 1
         ) {
-          const res = await fetch("/api/chat", {
+          const {
+            ok,
+            status: httpStatus,
+            payload,
+          } = await requestJson("/api/chat", {
             cache: "no-store",
             credentials: "same-origin",
+            signal: controller.signal,
+            timeoutMs: DEFAULT_REQUEST_TIMEOUT_MS,
+            timeoutMessage:
+              "Loading the conversation took too long. Reload the page to try again.",
           });
-          const data: unknown = await res.json();
 
           // A 401 response expires stale legacy/session cookies. Retry once so
           // the API can issue a fresh anonymous session without user action.
           if (
-            res.status === 401 &&
+            httpStatus === 401 &&
             attempt < MAX_HISTORY_AUTH_RECOVERY_ATTEMPTS
           ) {
+            sessionWasReplaced = true;
             continue;
           }
 
-          if (!res.ok) {
-            const message =
-              typeof data === "object" &&
-              data !== null &&
-              "error" in data &&
-              typeof data.error === "string"
-                ? data.error
-                : "Unable to load the conversation.";
-            throw new Error(message);
+          if (!ok) {
+            throw new Error(
+              responseError(payload, "Unable to load the conversation."),
+            );
           }
 
-          if (!Array.isArray(data)) {
+          if (!Array.isArray(payload)) {
             throw new Error("The conversation history response was invalid.");
           }
 
           if (!cancelled) {
             setHistoryError(null);
-            setMessages(data);
+            // Never replace a conversation the user has already started.
+            if (!hasStartedMessageRef.current) {
+              setMessages(payload);
+            }
+            // Panel results belong to the session they were run in.
+            setPanelResults(
+              sessionWasReplaced ? EMPTY_PANEL_RESULTS : storedPanelResults,
+            );
           }
           return;
         }
       } catch (error) {
+        if (cancelled || isAbortError(error)) return;
         console.error("Unable to load chat history", error);
-        if (!cancelled) {
-          setHistoryError(
-            error instanceof Error
-              ? error.message
-              : "Unable to load the conversation.",
-          );
-        }
+        setHistoryError(
+          error instanceof Error
+            ? error.message
+            : "Unable to load the conversation.",
+        );
+        setPanelResults(storedPanelResults);
+      } finally {
+        if (!cancelled) setIsHistoryLoading(false);
       }
     };
 
@@ -211,44 +349,87 @@ export default function Home() {
 
     return () => {
       cancelled = true;
+      controller.abort();
     };
   }, [setMessages]);
 
+  // Keep panel results for this browser session once the stored ones have
+  // been read (writing earlier would overwrite them with the empty default).
+  useEffect(() => {
+    if (isHistoryLoading) return;
+    savePanelResults(panelResults);
+  }, [isHistoryLoading, panelResults]);
+
+  const isChatBusy = status === "submitted" || status === "streaming";
+  const isGenerating = isChatBusy || isFinanceActionPending;
+  // Nothing new may be sent while a reply, a panel action, a reset or the
+  // initial history load is in flight.
+  const isSendBlocked = isGenerating || isResetting || isHistoryLoading;
+  const canSendInput = !isSendBlocked && input.trim() !== "";
+
+  // Return keyboard focus to the composer when a reply finishes, unless the
+  // user has moved focus somewhere else in the meantime.
+  useEffect(() => {
+    if (wasChatBusyRef.current && !isChatBusy) {
+      const active = document.activeElement;
+      if (
+        !active ||
+        active === document.body ||
+        composerRef.current?.contains(active)
+      ) {
+        textareaRef.current?.focus();
+      }
+    }
+    wasChatBusyRef.current = isChatBusy;
+  }, [isChatBusy]);
+
   const handleSubmit = async (text?: string) => {
     const msg = text || input;
-    if (!msg.trim()) return;
+    if (isSendBlocked || !msg.trim()) return;
 
+    hasStartedMessageRef.current = true;
+    clearError();
+    setNewChatError(null);
     sendMessage({ text: msg });
     setInput("");
   };
 
   const handleNewChat = async () => {
     setIsResetting(true);
+    setNewChatError(null);
 
     try {
-      const response = await fetch("/api/chat", { method: "DELETE" });
-      if (!response.ok) {
-        throw new Error("Unable to start a new chat");
+      const { ok, payload } = await requestJson("/api/chat", {
+        method: "DELETE",
+        credentials: "same-origin",
+        timeoutMs: DEFAULT_REQUEST_TIMEOUT_MS,
+        timeoutMessage: NEW_CHAT_ERROR,
+      });
+      if (!ok) {
+        throw new Error(responseError(payload, NEW_CHAT_ERROR));
       }
 
       setMessages([]);
-      setFinanceResults([]);
+      setPanelResults(EMPTY_PANEL_RESULTS);
       setInput("");
       clearError();
     } catch (error) {
       console.error("Unable to start a new chat", error);
+      setNewChatError(error instanceof Error ? error.message : NEW_CHAT_ERROR);
     } finally {
       setIsResetting(false);
     }
   };
 
-  const isEmpty = messages.length === 0 && financeResults.length === 0;
-  const isGenerating =
-    status === "submitted" || status === "streaming" || isFinanceActionPending;
+  const isEmpty = messages.length === 0 && panelResults.entries.length === 0;
+  const timeline = useMemo(
+    () => buildTimeline(messages, panelResults.entries),
+    [messages, panelResults.entries],
+  );
 
   return (
-    <main className="min-h-screen bg-[#f4f4f2] p-3 text-foreground sm:p-5 dark:bg-zinc-950">
-      <div className="mx-auto flex h-[calc(100vh-1.5rem)] min-h-[620px] w-full max-w-[1480px] flex-col overflow-hidden rounded-[26px] border border-zinc-200/80 bg-background shadow-[0_24px_80px_-36px_rgba(24,24,27,0.35)] sm:h-[calc(100vh-2.5rem)] dark:border-zinc-800 dark:shadow-black/30">
+    <main className="min-h-dvh bg-[#f4f4f2] p-3 text-foreground sm:p-5 dark:bg-zinc-950">
+      <div className="mx-auto flex h-[calc(100dvh-1.5rem)] w-full max-w-[1480px] flex-col overflow-hidden rounded-[26px] border border-zinc-200/80 bg-background shadow-[0_24px_80px_-36px_rgba(24,24,27,0.35)] sm:h-[calc(100dvh-2.5rem)] dark:border-zinc-800 dark:shadow-black/30">
         <header className="flex shrink-0 items-center justify-between border-b border-border/70 bg-background/90 px-4 py-3.5 backdrop-blur sm:px-6">
           <div className="flex min-w-0 items-center gap-3">
             <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-foreground text-background shadow-sm">
@@ -272,7 +453,7 @@ export default function Home() {
               <span className="size-1.5 rounded-full bg-emerald-500" />
               Analysis mode
             </Badge>
-            {!isEmpty && (
+            {!isEmpty && !isHistoryLoading && (
               <Button
                 type="button"
                 variant="outline"
@@ -300,7 +481,15 @@ export default function Home() {
               </Alert>
             </div>
           )}
-          {isEmpty ? (
+          {isHistoryLoading ? (
+            <div
+              className="flex flex-1 items-center justify-center gap-2 px-4 text-sm text-muted-foreground"
+              role="status"
+            >
+              <Loader2Icon className="size-4 animate-spin" aria-hidden="true" />
+              Loading your conversation…
+            </div>
+          ) : isEmpty ? (
             <section className="relative flex flex-1 flex-col items-center overflow-y-auto px-4 pb-8 pt-12 sm:px-8 sm:pt-16">
               <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,rgba(59,130,246,0.10),transparent_34%)]" />
               <div className="relative z-10 flex w-full max-w-5xl flex-col items-center">
@@ -345,7 +534,7 @@ export default function Home() {
                         <button
                           type="button"
                           onClick={() => handleSubmit(suggestion.prompt)}
-                          disabled={isGenerating || isResetting}
+                          disabled={isSendBlocked}
                           className="flex h-full min-h-[156px] w-full flex-col justify-between p-5 text-left outline-none focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50"
                         >
                           <div className="flex items-start justify-between gap-4">
@@ -372,102 +561,86 @@ export default function Home() {
           ) : (
             <Conversation className="h-full">
               <ConversationContent className="mx-auto w-full max-w-3xl gap-7 px-4 py-8 sm:px-6 md:px-0">
-                {messages.map((message) => (
-                  <div key={message.id} className="space-y-2">
-                    {message.parts?.map((part, i) => {
-                      if (part.type === "text") {
-                        const isUser = message.role === "user";
-
-                        return (
-                          <Message
-                            key={`${message.id}-${i}`}
-                            from={message.role}
-                            className={isUser ? "max-w-[88%]" : "max-w-full"}
-                          >
-                            {!isUser && (
-                              <div className="mb-1.5 flex items-center gap-2 text-xs font-medium text-muted-foreground">
-                                <span className="flex size-5 items-center justify-center rounded-md bg-foreground text-background">
-                                  <SparklesIcon className="size-3" />
-                                </span>
-                                Data Studio
-                              </div>
-                            )}
-                            <MessageContent
-                              className={
-                                isUser
-                                  ? "rounded-2xl rounded-br-md px-4 py-3"
-                                  : "max-w-3xl leading-7"
-                              }
-                            >
-                              <MessageResponse>{part.text}</MessageResponse>
-                            </MessageContent>
-                          </Message>
-                        );
-                      }
-
-                      if (part.type?.startsWith("tool-")) {
-                        const toolPart = part as ToolUIPart;
-                        const financeResult = financeAnalysisFromOutput(
-                          toolPart.output,
-                        );
-                        const toolOutput =
-                          typeof toolPart.output === "object" &&
-                          toolPart.output !== null
-                            ? (toolPart.output as Record<string, unknown>)
-                            : {};
-
-                        return (
-                          <div
-                            key={`${message.id}-${i}`}
-                            className="max-w-full sm:ml-7"
-                          >
-                            <Tool className="rounded-2xl border-border/70 bg-muted/20 shadow-none">
-                              <ToolHeader
-                                type={toolPart.type}
-                                state={toolPart.state || "output-available"}
-                                className="px-4"
-                              />
-                              <ToolContent>
-                                <ToolInput input={toolPart.input || {}} />
-                                {financeResult ? (
-                                  <FinanceAnalysisResult
-                                    result={financeResult}
-                                  />
-                                ) : (
-                                  <ToolOutput
-                                    output={toolPart.output}
-                                    errorText={toolPart.errorText}
-                                  />
-                                )}
-                              </ToolContent>
-                            </Tool>
-                            <ToolImages output={toolOutput} />
-                          </div>
-                        );
-                      }
-
-                      return null;
-                    })}
+                {panelResults.droppedCount > 0 && (
+                  <p className="rounded-lg border border-dashed border-border px-3 py-2 text-xs text-muted-foreground sm:ml-7">
+                    Only the {MAX_PANEL_RESULTS} most recent results run from
+                    the Finance data panel are kept.{" "}
+                    {panelResults.droppedCount === 1
+                      ? "1 older result is"
+                      : `${panelResults.droppedCount} older results are`}{" "}
+                    no longer shown.
+                  </p>
+                )}
+                {timeline.map((item) =>
+                  item.kind === "message" ? (
+                    <ChatMessageParts
+                      key={item.message.id}
+                      message={item.message}
+                    />
+                  ) : (
+                    <div
+                      key={`panel-${item.entry.result.runId}`}
+                      className="max-w-full sm:ml-7"
+                    >
+                      <FinanceAnalysisResult result={item.entry.result} />
+                    </div>
+                  ),
+                )}
+                {status === "submitted" && (
+                  // Announced through the live region beside the composer.
+                  <div
+                    aria-hidden="true"
+                    className="flex items-center gap-2 text-sm text-muted-foreground sm:ml-7"
+                  >
+                    <Loader2Icon className="size-4 animate-spin" />
+                    {WORKING_LABEL}
                   </div>
-                ))}
-                {financeResults.map((result) => (
-                  <div key={result.runId} className="max-w-full sm:ml-7">
-                    <FinanceAnalysisResult result={result} />
-                  </div>
-                ))}
+                )}
                 <ConversationScrollButton />
               </ConversationContent>
             </Conversation>
           )}
 
-          <div className="shrink-0 border-t border-border/70 bg-background/90 px-4 py-4 backdrop-blur sm:px-6 md:py-5">
-            <div className="mx-auto w-full max-w-3xl">
+          <div className="shrink-0 border-t border-border/70 bg-background/90 px-4 py-4 backdrop-blur sm:px-6 md:py-5 [@media(max-height:560px)]:py-2!">
+            <div ref={composerRef} className="mx-auto w-full max-w-3xl">
+              <p className="sr-only" role="status" aria-live="polite">
+                {status === "submitted" ? WORKING_LABEL : ""}
+              </p>
+              {(chatError || newChatError) && (
+                <Alert variant="destructive" className="mb-3">
+                  <AlertTitle>
+                    {chatError
+                      ? "The request was not completed"
+                      : "Unable to start a new analysis"}
+                  </AlertTitle>
+                  <AlertDescription>
+                    <p>
+                      {chatError ? chatErrorMessage(chatError) : newChatError}
+                    </p>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="mt-2 h-7 bg-background px-2.5 text-foreground shadow-none"
+                      onClick={() => {
+                        clearError();
+                        setNewChatError(null);
+                      }}
+                    >
+                      Dismiss
+                    </Button>
+                  </AlertDescription>
+                </Alert>
+              )}
               <FinanceDatasetControls
                 open={isDatasetPanelOpen}
                 onOpenChange={setIsDatasetPanelOpen}
-                onResult={(result) =>
-                  setFinanceResults((current) => [...current, result].slice(-8))
-                }
+                onResult={(result) => {
+                  const messageCount = messages.length;
+                  setPanelResults((current) =>
+                    appendPanelResult(current, result, messageCount),
+                  );
+                }}
                 onBusyChange={setIsFinanceActionPending}
                 disabled={isGenerating || isResetting}
               />
@@ -476,12 +649,26 @@ export default function Home() {
                 className="[&>[data-slot=input-group]]:rounded-2xl [&>[data-slot=input-group]]:border-border/80 [&>[data-slot=input-group]]:bg-background [&>[data-slot=input-group]]:shadow-[0_8px_30px_-18px_rgba(24,24,27,0.35)]"
               >
                 <PromptInputBody>
+                  {/* Stays enabled while a reply is generated so keyboard
+                      focus is kept and the next question can be drafted;
+                      sending is blocked instead. */}
                   <PromptInputTextarea
+                    ref={textareaRef}
                     onChange={(e) => setInput(e.target.value)}
-                    className="min-h-[68px] px-4 pb-2 pt-4 text-[15px] leading-6 placeholder:text-muted-foreground/70"
+                    onKeyDown={(e) => {
+                      if (
+                        e.key === "Enter" &&
+                        !e.shiftKey &&
+                        !e.nativeEvent.isComposing &&
+                        !canSendInput
+                      ) {
+                        e.preventDefault();
+                      }
+                    }}
+                    className="min-h-[68px] px-4 pb-2 pt-4 text-[15px] leading-6 placeholder:text-muted-foreground/70 [@media(max-height:560px)]:min-h-[44px]! [@media(max-height:560px)]:pt-2!"
                     value={input}
                     placeholder="Ask anything about your data..."
-                    disabled={isGenerating || isResetting}
+                    readOnly={isResetting}
                   />
                 </PromptInputBody>
                 <PromptInputFooter className="border-t border-border/60 px-3 py-2">
@@ -498,8 +685,9 @@ export default function Home() {
                   <PromptInputSubmit
                     status={status}
                     onStop={stop}
-                    disabled={isResetting}
-                    aria-label={isGenerating ? "Stop analysis" : "Send message"}
+                    // While a reply is generated this is the stop button.
+                    disabled={!isChatBusy && !canSendInput}
+                    aria-label={isChatBusy ? "Stop analysis" : "Send message"}
                     className="rounded-xl bg-foreground text-background hover:bg-foreground/85"
                   />
                 </PromptInputFooter>

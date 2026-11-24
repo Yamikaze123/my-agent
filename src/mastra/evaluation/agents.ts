@@ -16,13 +16,26 @@ import { getCollectionTaskContext } from "./collection-fixture";
 import { getCollectionFixtureTool } from "./collection-fixture-tool";
 import { DATA_ANALYSIS_AGENT_INSTRUCTIONS } from "../agents/prompt-blocks";
 
-const COLLECTION_MODEL = "nvidia/nemotron-3.5-super-vl:free";
+/**
+ * The provider model every collection agent runs. A collection manifest must
+ * name the same model; `runCollectionCommand` verifies that before the first
+ * provider call.
+ */
+export const COLLECTION_MODEL = "nvidia/nemotron-3.5-super-vl:free";
 
-const openRouterProvider = createOpenRouter({
-  apiKey: requiredEnvironmentVariable("OPENROUTER_API_KEY"),
-  baseURL: "https://openrouter.ai/api/v1",
-  compatibility: "strict",
-});
+/**
+ * Evaluation agents are registered with the Mastra instance (and therefore
+ * exposed by its server and Studio) only when this flag is "true" or "1".
+ * The collection harness imports the agents directly and does not need it.
+ */
+export const EVALUATION_AGENTS_ENV_FLAG = "EVALUATION_AGENTS_ENABLED";
+
+export function evaluationAgentsEnabled(
+  environment: Record<string, string | undefined> = process.env,
+): boolean {
+  const value = environment[EVALUATION_AGENTS_ENV_FLAG]?.trim().toLowerCase();
+  return value === "true" || value === "1";
+}
 
 const baselineInstructions = [
   "You are the frozen pre-capstone finance-analysis baseline used for a controlled provider evaluation.",
@@ -75,65 +88,85 @@ const ablationAllowedTools = new Set([
   ...workflowToolNames(ablationWorkflows),
 ]);
 
-export const collectionBaselineAgent = new Agent({
-  id: "collection-baseline-agent",
-  name: "Collection Baseline Agent",
-  instructions: baselineInstructions,
-  model: openRouterProvider.chat(COLLECTION_MODEL),
-  tools: {
-    runPythonCodeTool,
-    getCollectionFixtureTool,
-  },
-});
+function createCollectionAgents() {
+  // The API key is read here, not at module load, so importing this module
+  // (for example from src/mastra/index.ts in production) neither requires
+  // the key nor constructs the baseline agent, which has the Python tool and
+  // no guardrail processors.
+  const openRouterProvider = createOpenRouter({
+    apiKey: requiredEnvironmentVariable("OPENROUTER_API_KEY"),
+    baseURL: "https://openrouter.ai/api/v1",
+    compatibility: "strict",
+  });
 
-export const collectionGovernedAgent = new Agent({
-  id: "collection-governed-agent",
-  name: "Collection Governed Agent",
-  instructions: ({ requestContext }) =>
-    collectionInstructions(
-      DATA_ANALYSIS_AGENT_INSTRUCTIONS,
-      "financeAnalysisWorkflow",
-      requestContext,
-    ),
-  model: openRouterProvider.chat(COLLECTION_MODEL),
-  tools: dataAnalysisTools,
-  workflows: governedWorkflows,
-  inputProcessors: [
-    new ChatInputGuardrailProcessor(),
-    new EnsureFinalResponseProcessor(MAX_AGENT_STEPS),
-  ],
-  outputProcessors: [new ChatOutputGuardrailProcessor(governedAllowedTools)],
-});
+  const collectionBaselineAgent = new Agent({
+    id: "collection-baseline-agent",
+    name: "Collection Baseline Agent",
+    instructions: baselineInstructions,
+    model: openRouterProvider.chat(COLLECTION_MODEL),
+    tools: {
+      runPythonCodeTool,
+      getCollectionFixtureTool,
+    },
+  });
 
-export const collectionAblationAgent = new Agent({
-  id: "collection-ablation-agent",
-  name: "Collection Quality-Gate Ablation Agent",
-  instructions: ({ requestContext }) =>
-    collectionInstructions(
-      [
+  const collectionGovernedAgent = new Agent({
+    id: "collection-governed-agent",
+    name: "Collection Governed Agent",
+    instructions: ({ requestContext }) =>
+      collectionInstructions(
         DATA_ANALYSIS_AGENT_INSTRUCTIONS,
-        "For this ablation, the finance quality gate is intentionally removed. Use financeAnalysisAblationWorkflow instead of run-finance-analysis whenever the task is fixture-backed. Do not claim a quality-gate finding from this variant; report that the ablation path does not evaluate that gate.",
-      ].join("\n\n"),
-      "financeAnalysisAblationWorkflow",
-      requestContext,
-    ),
-  model: openRouterProvider.chat(COLLECTION_MODEL),
-  tools: {
-    runPythonCodeTool,
-    listFinanceDatasetsTool,
-  },
-  workflows: ablationWorkflows,
-  inputProcessors: [
-    new ChatInputGuardrailProcessor(),
-    new EnsureFinalResponseProcessor(MAX_AGENT_STEPS),
-  ],
-  outputProcessors: [new ChatOutputGuardrailProcessor(ablationAllowedTools)],
-});
+        "financeAnalysisWorkflow",
+        requestContext,
+      ),
+    model: openRouterProvider.chat(COLLECTION_MODEL),
+    tools: dataAnalysisTools,
+    workflows: governedWorkflows,
+    inputProcessors: [
+      new ChatInputGuardrailProcessor(),
+      new EnsureFinalResponseProcessor(MAX_AGENT_STEPS),
+    ],
+    outputProcessors: [new ChatOutputGuardrailProcessor(governedAllowedTools)],
+  });
 
-export const collectionAgents = {
-  baseline: collectionBaselineAgent,
-  governed: collectionGovernedAgent,
-  ablation: collectionAblationAgent,
-} as const;
+  const collectionAblationAgent = new Agent({
+    id: "collection-ablation-agent",
+    name: "Collection Quality-Gate Ablation Agent",
+    instructions: ({ requestContext }) =>
+      collectionInstructions(
+        [
+          DATA_ANALYSIS_AGENT_INSTRUCTIONS,
+          "For this ablation, the finance quality gate is intentionally removed. Use financeAnalysisAblationWorkflow instead of run-finance-analysis whenever the task is fixture-backed. Do not claim a quality-gate finding from this variant; report that the ablation path does not evaluate that gate.",
+        ].join("\n\n"),
+        "financeAnalysisAblationWorkflow",
+        requestContext,
+      ),
+    model: openRouterProvider.chat(COLLECTION_MODEL),
+    tools: {
+      runPythonCodeTool,
+      listFinanceDatasetsTool,
+    },
+    workflows: ablationWorkflows,
+    inputProcessors: [
+      new ChatInputGuardrailProcessor(),
+      new EnsureFinalResponseProcessor(MAX_AGENT_STEPS),
+    ],
+    outputProcessors: [new ChatOutputGuardrailProcessor(ablationAllowedTools)],
+  });
 
-export type CollectionAgents = typeof collectionAgents;
+  return {
+    baseline: collectionBaselineAgent,
+    governed: collectionGovernedAgent,
+    ablation: collectionAblationAgent,
+  } as const;
+}
+
+export type CollectionAgents = ReturnType<typeof createCollectionAgents>;
+
+let cachedCollectionAgents: CollectionAgents | undefined;
+
+/** One agent per frozen variant, constructed on first use. */
+export function getCollectionAgents(): CollectionAgents {
+  cachedCollectionAgents ??= createCollectionAgents();
+  return cachedCollectionAgents;
+}

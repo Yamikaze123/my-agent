@@ -22,6 +22,7 @@ import {
   type CollectionManifest,
   type ProviderRetryPolicy,
 } from "./contracts";
+import { classifyHarnessFailure } from "./failure-classification";
 import { ImmutableMeasurementBatch } from "./measurement-record";
 
 export const MAX_MODEL_STEPS_PER_RUN = 5;
@@ -246,6 +247,23 @@ export type CollectionProgress = {
 
 export type CollectionProgressHandler = (progress: CollectionProgress) => void;
 
+export type CollectionRecordEvent = {
+  entry: CollectionPlanEntry;
+  plannedRuns: number;
+  /**
+   * Bounded, redacted operator text for a non-provider failure. It is passed
+   * to the caller for logging or a partial-run sidecar and is never part of
+   * the measurement record.
+   */
+  diagnosticMessage?: string;
+};
+
+/** Called once per run, immediately after its record is appended. */
+export type CollectionRecordHandler = (
+  record: MeasurementRecord,
+  event: CollectionRecordEvent,
+) => void;
+
 export type CollectionExecutor = (
   request: CollectionExecutionRequest,
 ) => Promise<CollectionExecutionResult>;
@@ -255,6 +273,27 @@ export type CollectionFailureCategory = Exclude<
   undefined
 >;
 
+export type CollectionFailureUsage = {
+  inputTokens: number;
+  outputTokens: number;
+  modelCalls: number;
+};
+
+export type CollectionFailureDetails = {
+  /** Tokens and completed model calls consumed before the run failed. */
+  usage?: CollectionFailureUsage;
+  /** Tool calls the model issued before the run failed. */
+  toolCalls?: number;
+  /**
+   * True when the provider call itself finished and the run failed afterwards
+   * (for example while building the record). The failed record then reports
+   * providerOutcome "completed" instead of "not-called".
+   */
+  providerCompleted?: boolean;
+  /** Bounded, redacted operator text; never written to a record. */
+  diagnosticMessage?: string;
+};
+
 export class CollectionExecutionError extends Error {
   constructor(
     message: string,
@@ -262,13 +301,18 @@ export class CollectionExecutionError extends Error {
     readonly retryCount = 0,
     readonly retryDiagnostics: MeasurementProviderFailureDiagnostic[] = [],
     readonly failureDiagnostic?: MeasurementProviderFailureDiagnostic,
+    readonly details: CollectionFailureDetails = {},
   ) {
     super(message);
     this.name = "CollectionExecutionError";
   }
 }
 
-function costFields(manifest: CollectionManifest) {
+function costFields(
+  manifest: CollectionManifest,
+  inputTokens: number,
+  outputTokens: number,
+) {
   const inputPrice = manifest.model.inputPriceUsdPerMillionTokens;
   const outputPrice = manifest.model.outputPriceUsdPerMillionTokens;
   if (inputPrice === null || outputPrice === null) {
@@ -282,7 +326,9 @@ function costFields(manifest: CollectionManifest) {
     costStatus: "estimated" as const,
     inputPriceUsdPerMillionTokens: inputPrice,
     outputPriceUsdPerMillionTokens: outputPrice,
-    estimatedCostUsd: 0,
+    estimatedCostUsd:
+      (inputTokens / 1_000_000) * inputPrice +
+      (outputTokens / 1_000_000) * outputPrice,
     estimatedCostFormula:
       "(inputTokens / 1,000,000 * inputRate) + (outputTokens / 1,000,000 * outputRate)",
   };
@@ -294,9 +340,21 @@ function failedRecord(args: {
   retryCount?: number;
   retryDiagnostics?: MeasurementProviderFailureDiagnostic[];
   failureDiagnostic?: MeasurementProviderFailureDiagnostic;
+  details?: CollectionFailureDetails;
   latencyMs?: number;
 }): MeasurementRecord {
   const recordedAt = new Date().toISOString();
+  // A failed attempt can still have consumed tokens (for example a run that
+  // fails on its third model step). Record what the provider reported instead
+  // of zero so cost totals include failed runs.
+  const inputTokens = args.details?.usage?.inputTokens ?? 0;
+  const outputTokens = args.details?.usage?.outputTokens ?? 0;
+  const providerOutcome =
+    args.failureCategory === "provider"
+      ? "failed"
+      : args.details?.providerCompleted
+        ? "completed"
+        : "not-called";
   return measurementRecordSchema.parse({
     measurementId: randomUUID(),
     batchId: args.request.manifest.measurementBatchId,
@@ -318,14 +376,14 @@ function failedRecord(args: {
       : {}),
     scores: { "schema-validity": 0 },
     usage: {
-      inputTokens: 0,
-      outputTokens: 0,
-      modelCalls: 0,
-      ...costFields(args.request.manifest),
+      inputTokens,
+      outputTokens,
+      modelCalls: args.details?.usage?.modelCalls ?? 0,
+      ...costFields(args.request.manifest, inputTokens, outputTokens),
     },
     timing: { latencyMs: args.latencyMs ?? 0 },
     counts: {
-      toolCalls: 0,
+      toolCalls: args.details?.toolCalls ?? 0,
       workflowSteps: 0,
       retries: args.retryCount ?? 0,
     },
@@ -337,8 +395,7 @@ function failedRecord(args: {
       recovery: "not-evaluated",
     },
     sandboxOutcome: "not-run",
-    providerOutcome:
-      args.failureCategory === "provider" ? "failed" : "not-called",
+    providerOutcome,
     artifactIds: [],
     traceIds: [],
     recordedAt,
@@ -413,6 +470,8 @@ export async function runCollection(args: {
   executor: CollectionExecutor;
   progressIntervalMs?: number;
   onProgress?: CollectionProgressHandler;
+  /** Receives every record as it is produced, for incremental persistence. */
+  onRecord?: CollectionRecordHandler;
 }): Promise<CollectionBatch> {
   const plan = buildCollectionPlan(args.manifest, args.taskSet);
   const tasks = taskMap(args.taskSet);
@@ -460,6 +519,7 @@ export async function runCollection(args: {
       const runStartedAt = Date.now();
 
       let record: MeasurementRecord;
+      let diagnosticMessage: string | undefined;
       try {
         const result = await args.executor(request);
         const returned = recordFromResult(result);
@@ -472,19 +532,34 @@ export async function runCollection(args: {
       } catch (error) {
         const executionError =
           error instanceof CollectionExecutionError ? error : undefined;
-        const category = executionError
-          ? executionError.failureCategory
-          : "provider";
+        // An executor signals a provider failure explicitly. Anything else
+        // (a schema failure, a fixture error, a harness bug) is classified by
+        // its type so it is never counted as a provider outage.
+        const classified = executionError
+          ? undefined
+          : classifyHarnessFailure(error);
+        diagnosticMessage =
+          executionError?.details.diagnosticMessage ??
+          classified?.diagnosticMessage;
         record = failedRecord({
           request,
-          failureCategory: category,
+          failureCategory:
+            executionError?.failureCategory ??
+            classified?.category ??
+            "unknown",
           retryCount: executionError?.retryCount,
           retryDiagnostics: executionError?.retryDiagnostics,
           failureDiagnostic: executionError?.failureDiagnostic,
+          details: executionError?.details,
           latencyMs: Date.now() - runStartedAt,
         });
       }
-      batch.append(record);
+      const appended = batch.append(record);
+      args.onRecord?.(appended, {
+        entry,
+        plannedRuns: plan.entries.length,
+        ...(diagnosticMessage ? { diagnosticMessage } : {}),
+      });
       completedRuns += 1;
       if (record.status === "failed") failedRuns += 1;
       currentEntry = plan.entries[completedRuns];

@@ -234,4 +234,37 @@ describe("classifyRunError", () => {
     expect(classified.message).toContain("[REDACTED_API_KEY]");
     expect(classified.message.length).toBeLessThanOrEqual(1_000);
   });
+
+  it("annualizes an uploaded daily series by its own frequency and discloses it", async () => {
+    const context = permissionContext();
+    const lines = ["ticker,date,close"];
+    const cursor = new Date("2025-01-02T00:00:00Z");
+    let close = 100;
+    let count = 0;
+    while (count < 121) {
+      const day = cursor.getUTCDay();
+      if (day !== 0 && day !== 6) {
+        if (count > 0) close *= count % 2 === 1 ? 1.01 : 0.99;
+        lines.push(
+          `AAA,${cursor.toISOString().slice(0, 10)},${close.toFixed(6)}`,
+        );
+        count += 1;
+      }
+      cursor.setUTCDate(cursor.getUTCDate() + 1);
+    }
+    const entry = registerFinanceCsv(context, csv(`${lines.join("\n")}\n`));
+
+    const result = await runFinanceAnalysisWorkflow(context, {
+      datasetId: entry.dataset.datasetId,
+      metricId: "volatility",
+    });
+
+    expect(result.status).toBe("completed");
+    expect(result.metrics).toHaveLength(1);
+    expect(result.metrics[0].value).toBeGreaterThan(15.5);
+    expect(result.metrics[0].value).toBeLessThan(16.5);
+    expect(result.metrics[0].assumptions).toContain(
+      "Observation frequency: daily, inferred from a typical gap of 1 calendar day; annualized with sqrt(252).",
+    );
+  });
 });
