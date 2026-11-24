@@ -1,7 +1,6 @@
 import { handleChatStream } from "@mastra/ai-sdk";
 import { toAISdkMessages } from "@mastra/ai-sdk/ui";
 import { createUIMessageStreamResponse, type UIMessage } from "ai";
-import { mastra } from "@/mastra";
 import { NextResponse } from "next/server";
 import { MAX_AGENT_STEPS } from "@/mastra/config";
 import {
@@ -32,6 +31,11 @@ const MAX_MODEL_RETRIES = 0;
 const MAX_HISTORY_OUTPUT_LENGTH = 8_000;
 
 type JsonRecord = Record<string, unknown>;
+type MastraInstance = (typeof import("@/mastra"))["mastra"];
+
+async function loadMastra(): Promise<MastraInstance> {
+  return (await import("@/mastra")).mastra;
+}
 
 const AUTHORIZATION_FIELDS = new Set([
   "agent",
@@ -240,6 +244,7 @@ function configurationResponse(): Response {
 }
 
 async function assertStoredThreadOwnership(
+  mastra: MastraInstance,
   threadId: string,
   resourceId: string,
 ): Promise<void> {
@@ -260,7 +265,16 @@ export async function POST(req: Request) {
       createMastraRequestContext(resolved.permissionContext),
       "chat:write",
     );
+  } catch (error) {
+    if (error instanceof ConfigurationError) return configurationResponse();
+    if (error instanceof AuthorizationError) return unauthorizedResponse(req);
+    throw error;
+  }
+
+  const mastra = await loadMastra();
+  try {
     await assertStoredThreadOwnership(
+      mastra,
       resolved.permissionContext.thread.id,
       resolved.permissionContext.resource.id,
     );
@@ -333,7 +347,16 @@ export async function GET(req: Request) {
       createMastraRequestContext(resolved.permissionContext),
       "memory:read",
     );
+  } catch (error) {
+    if (error instanceof ConfigurationError) return configurationResponse();
+    if (error instanceof AuthorizationError) return unauthorizedResponse(req);
+    throw error;
+  }
+
+  const mastra = await loadMastra();
+  try {
     await assertStoredThreadOwnership(
+      mastra,
       resolved.permissionContext.thread.id,
       resolved.permissionContext.resource.id,
     );
